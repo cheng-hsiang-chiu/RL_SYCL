@@ -6,11 +6,17 @@
 #include <memory>
 #include <list>
 #include <utility>
-#include "threadpool.hpp"
+#include <thread>
+#include <condition_variable>
+#include <mutex>
+#include <queue>
 
+#include "policy.hpp"
 
 namespace tgs {
 
+class RL_Policy;
+class TGS;
 
 struct Task {
   size_t ID;
@@ -29,43 +35,77 @@ struct Task {
 };
 
 
-enum Accelerator {
-  GPU = 0,
-  CPU
+
+class ThreadPool {
+
+public:
+
+  ThreadPool(const ThreadPool &) = delete;
+  
+  ThreadPool(ThreadPool &&) = delete;
+  
+  ThreadPool &operator=(const ThreadPool &) = delete;
+  
+  ThreadPool &operator=(ThreadPool &&) = delete;
+  
+  ThreadPool(const size_t, TGS*);
+
+  virtual ~ThreadPool();
+
+  template<typename T>
+  void enqueue(T&&);
+
+private:
+
+  TGS* _tgs; 
+
+  RL_Policy _rl;
+
+  std::mutex _mtx;
+
+  std::condition_variable _cv;
+
+  std::vector<std::thread> _workers;
+
+  std::queue<std::shared_ptr<Task>> _queue_tasks;
+
+  template<typename T>
+  void _process(T&&);
 };
-
-
 
 // task graph scheduler class  
 class TGS {
+
+friend class ThreadPool;
+
 public:
 
   TGS(const size_t);
 
   void dump(std::ostream&) const;
 
+  void schedule();
+
 private:
   size_t _V;
 
   size_t _E;
 
-  std::vector<std::unique_ptr<Task>> _tasks;
+  std::vector<std::shared_ptr<Task>> _tasks;
   
-  std::vector<std::unique_ptr<Task>> _sorted_tasks;
+  std::vector<std::shared_ptr<Task>> _sorted_tasks;
 
   std::vector<std::vector<size_t>> _graph;
  
-  threadpool::ThreadPool _tpool; 
+  ThreadPool _tpool; 
 
-  std::future<std::pair<const size_t, const Acclerator>> _policy;
-  
   void _topological_sort();  
 };
 
 
 
 // TGS construtor
-inline TGS::TGS(const size_t num_threads) : _tpool(num_threads) {
+inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
   std::cout << num_threads << " concurrent threads are supported.\n";
 
   std::cin >> _V >> _E;
@@ -79,7 +119,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads) {
     size_t id, m, n;
     std::cin >> id >> m >> n;
   
-    _tasks[id] = std::make_unique<Task>(id, m, n);;
+    _tasks[id] = std::make_shared<Task>(id, m, n);;
   }
   
   // parse the edges
@@ -112,7 +152,7 @@ inline void TGS::_topological_sort() {
 
   while (!q.empty()) {
     size_t id = q.front();
-    _sorted_tasks[cnt++] = std::move(_tasks[id]);
+    _sorted_tasks[cnt++] = _tasks[id];
     q.pop();
 
     for (size_t i = 0; i < _graph[id].size(); ++i) {
@@ -125,9 +165,10 @@ inline void TGS::_topological_sort() {
 
 
 inline void TGS::schedule() {
-  while (!_sorted_task.empty()) {
-    if (*(_sorted_task.begin())->dependency == 0) {
-      _tpool.enque(std::move(*_sorted_task.begin())); 
+  while (!_sorted_tasks.empty()) {
+    if ((*_sorted_tasks.begin())->dependency == 0) {
+      _tpool.enqueue(*_sorted_tasks.begin()); 
+      _sorted_tasks.erase(_sorted_tasks.begin());
     }
   }
 }
@@ -158,6 +199,62 @@ inline void TGS::dump(std::ostream& os) const {
 
 
 
+
+
+// destructor
+inline ThreadPool::~ThreadPool() {
+  for (auto& w : _workers) {
+    w.join();
+  }
+}
+
+
+// constructor
+inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) { 
+  _tgs = t;
+  for (size_t i = 0; i < num_threads; ++i) {
+    _workers.emplace_back([&]() {
+      std::shared_ptr<Task> task;
+      
+      while (1) {
+        {
+          std::unique_lock lk(_mtx);
+          _cv.wait(lk, [&]() { return !_queue_tasks.empty(); });
+          
+          task = _queue_tasks.front();
+          _queue_tasks.pop();
+        }
+
+        auto policy = _rl.policy(task);
+        _process(task);
+      }
+    });
+  }
+}
+
+
+template<typename T>
+inline void ThreadPool::enqueue(T&& task) {
+  {
+    std::unique_lock lk(_mtx);
+
+    _queue_tasks.emplace(std::forward<T>(task));
+  }
+
+  _cv.notify_one();
+}
+
+
+template<typename T>
+inline void ThreadPool::_process(T&& task) {
+  std::cout << "Thread " << std::this_thread::get_id()
+            << " is processing task " << task->ID << '\n';
+
+  for (auto& tid : _tgs->_graph[task->ID]) {
+    std::cout << "tid = " << tid << '\n';
+    _tgs->_sorted_tasks[tid]->dependency.fetch_sub(1, std::memory_order_acq_rel);  
+  }
+}
        
 
 

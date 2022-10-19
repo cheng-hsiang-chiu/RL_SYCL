@@ -8,6 +8,7 @@ int main() {
 
   scheduler.dump(std::cout);
 
+  scheduler.schedule();
 
   return 0;
 }
