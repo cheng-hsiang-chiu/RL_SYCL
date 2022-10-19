@@ -1,0 +1,169 @@
+#pragma once
+
+#include <iostream>
+#include <atomic>
+#include <vector>
+#include <memory>
+#include <list>
+#include <utility>
+#include "threadpool.hpp"
+
+
+namespace tgs {
+
+
+struct Task {
+  size_t ID;
+
+  // the row dimension of the matrix
+  size_t M;
+
+  // the column dimension of the matrix
+  size_t N;
+
+  // atomic dependency
+  std::atomic<int> dependency = 0;
+
+  Task(const size_t id, const size_t m, const size_t n) :
+    ID{id}, M{m}, N{n} {} 
+};
+
+
+enum Accelerator {
+  GPU = 0,
+  CPU
+};
+
+
+
+// task graph scheduler class  
+class TGS {
+public:
+
+  TGS(const size_t);
+
+  void dump(std::ostream&) const;
+
+private:
+  size_t _V;
+
+  size_t _E;
+
+  std::vector<std::unique_ptr<Task>> _tasks;
+  
+  std::vector<std::unique_ptr<Task>> _sorted_tasks;
+
+  std::vector<std::vector<size_t>> _graph;
+ 
+  threadpool::ThreadPool _tpool; 
+
+  std::future<std::pair<const size_t, const Acclerator>> _policy;
+  
+  void _topological_sort();  
+};
+
+
+
+// TGS construtor
+inline TGS::TGS(const size_t num_threads) : _tpool(num_threads) {
+  std::cout << num_threads << " concurrent threads are supported.\n";
+
+  std::cin >> _V >> _E;
+
+  _graph.resize(_V);
+  _tasks.resize(_V);
+  _sorted_tasks.resize(_V);
+
+  // parse the meta data of every task
+  for (size_t i = 0; i < _V; ++i) {
+    size_t id, m, n;
+    std::cin >> id >> m >> n;
+  
+    _tasks[id] = std::make_unique<Task>(id, m, n);;
+  }
+  
+  // parse the edges
+  for (size_t i = 0; i < _E; ++i) {
+    size_t from, to;
+    std::cin >> from >> to;
+
+    _graph[from].push_back(to);
+    ++(_tasks[to]->dependency);
+  }
+
+  _topological_sort();
+}
+
+
+// topological sort on _tasks
+// the sorted tasks are kept in _sorted_tasks
+inline void TGS::_topological_sort() {
+  size_t cnt = 0;
+  std::queue<size_t> q;
+
+  std::vector<int> temp(_V);
+  // push tasks of zero dependency
+  for (auto& t : _tasks) {
+    if (t->dependency == 0) {
+      q.push(t->ID); 
+    }
+    temp[t->ID] = t->dependency;
+  }
+
+  while (!q.empty()) {
+    size_t id = q.front();
+    _sorted_tasks[cnt++] = std::move(_tasks[id]);
+    q.pop();
+
+    for (size_t i = 0; i < _graph[id].size(); ++i) {
+      if (--(temp[_graph[id][i]]) == 0) {
+        q.push(_tasks[_graph[id][i]]->ID); 
+      }
+    }
+  }
+}
+
+
+inline void TGS::schedule() {
+  while (!_sorted_task.empty()) {
+    if (*(_sorted_task.begin())->dependency == 0) {
+      _tpool.enque(std::move(*_sorted_task.begin())); 
+    }
+  }
+}
+
+
+
+
+
+
+
+
+inline void TGS::dump(std::ostream& os) const {
+  //for (auto& task : _tasks) {
+  //  os << "Task["            << task->ID         << "]\n"
+  //     << "   M : "          << task->M          << '\n'
+  //     << "   N : "          << task->N          << '\n'
+  //     << "   dependency : " << task->dependency << '\n';
+  //}
+  
+  for (auto& task : _sorted_tasks) {
+    os << "Sorted Task["     << task->ID         << "]\n"
+       << "   M : "          << task->M          << '\n'
+       << "   N : "          << task->N          << '\n'
+       << "   dependency : " << task->dependency << '\n';
+  }
+}
+
+
+
+
+       
+
+
+
+
+
+
+
+} // end of namespace tgs
