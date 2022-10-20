@@ -224,7 +224,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       while (1) {
         {
           //printf("worker %zu before cv\n", id);
-          std::unique_lock lk(_mtxs[id]);
+          std::unique_lock<std::mutex> lk(_mtxs[id]);
           _cvs[id].wait(lk, [&]() { 
             return !_queues[id].empty() || stop; 
           });
@@ -246,7 +246,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
     while(1) {
       {
         //printf("master thread before cv\n");
-        std::unique_lock lk(_mtxs[_num_threads]);
+        std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
         _cvs[_num_threads].wait(lk, [&](){
           return !_queues[_num_threads].empty() || stop;
         }); 
@@ -260,7 +260,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       printf("task %zu has policy[worker %ld, accelerator %d]\n", task->ID, policy.first, policy.second);
       
       {
-        std::unique_lock lk(_mtxs[policy.first]);
+        std::unique_lock<std::mutex> lk(_mtxs[policy.first]);
         //printf("get %zu's lock\n", policy.first);
         task->accelerator = policy.second;
         _queues[policy.first].emplace(task);
@@ -276,7 +276,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
 template<typename T>
 inline void ThreadPool::enqueue(T&& task) {
   {
-    std::unique_lock lk(_mtxs[_num_threads]);
+    std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
     _queues[_num_threads].emplace(std::forward<T>(task));
   }
   //printf("finish enqueue task\n");
