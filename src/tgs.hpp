@@ -230,7 +230,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
           });
           //printf("worker %zu after cv\n", id);
           
-          task = std::move(_queues[id].front());
+          task = _queues[id].front();
           _queues[id].pop();
         }
 
@@ -252,7 +252,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         }); 
         //printf("master thread after cv\n");
         
-        task = std::move(_queues[_num_threads].front());
+        task = _queues[_num_threads].front();
         _queues[_num_threads].pop();  
       }
       
