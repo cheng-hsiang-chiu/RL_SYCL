@@ -84,7 +84,7 @@ private:
   std::vector<std::queue<Task*>> _queues;
 
   template<typename T>
-  void _process(T&&);
+  void _process(size_t, T&&);
 };
 
 // task graph scheduler class  
@@ -213,7 +213,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
           }
         }
 
-        _process(task);
+        _process(id, task);
       }
     });
   }
@@ -241,8 +241,14 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         }
       }
       
+      // TODO: yile
+      // just an example to output load
+      double loadavg[3];
+      getloadavg(loadavg, 3);
+      
+      printf("current system loadavg %.3lf %.3lf %.3lf\n", loadavg[0], loadavg[1], loadavg[2]);
       auto policy = _rl.policy(task);
-      printf("task %zu has policy[worker %ld, accelerator %d]\n", task->ID, policy.first, policy.second);
+      printf("Master decide to run task %zu with the policy: worker %ld, accelerator %d\n", task->ID, policy.first, policy.second);
       
       {
         std::unique_lock<std::mutex> lk(_mtxs[policy.first]);
@@ -253,6 +259,8 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       //printf("release %zu's lock\n", policy.first);
       
       _cvs[policy.first].notify_one();
+
+      // after this action
     }
   });
 }
@@ -270,14 +278,14 @@ inline void ThreadPool::enqueue(T&& task) {
 
 
 template<typename T>
-inline void ThreadPool::_process(T&& task) {
+inline void ThreadPool::_process(size_t id, T&& task) {
 
   std::ostringstream oss;
-  oss << "Thread " << std::this_thread::get_id() 
-      << " is processing task " << task->ID << std::endl;
+  oss << "Worker " << id << " is processing task " << task->ID << std::endl;
   printf("%s\n", oss.str().c_str());
 
   // TODO: add SYCL kernel based on the policy
+  std::this_thread::sleep_for(std::chrono::milliseconds(task->M * task->N));
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
