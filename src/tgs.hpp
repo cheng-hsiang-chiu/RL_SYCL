@@ -61,6 +61,8 @@ class ThreadPool {
 
 public:
 
+  bool stop = false;
+  
   ThreadPool(const ThreadPool &) = delete;
   
   ThreadPool(ThreadPool &&) = delete;
@@ -167,7 +169,7 @@ inline void TGS::schedule() {
         continue;
       }
       if (t->join_counter.load() == 0) {
-        printf("task %zu is scheduled\n", t->ID);
+        printf("task %zu is master's queue\n", t->ID);
         t->scheduled = true;
         ++cnt_scheduled;
         
@@ -175,6 +177,7 @@ inline void TGS::schedule() {
       }
     }
   }
+  _tpool.stop = true;
   _tpool.~ThreadPool();
 }
 
@@ -194,6 +197,11 @@ inline void TGS::dump(std::ostream& os) const {
 
 // destructor
 inline ThreadPool::~ThreadPool() {
+  if (stop == true) {
+    for (size_t i = 0; i <= _num_threads; ++i) {
+      _cvs[i].notify_all();
+    }
+  }
   for (auto& w : _workers) {
     w.join();
   }
@@ -215,15 +223,15 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       
       while (1) {
         {
-          printf("worker %zu before cv\n", id);
+          //printf("worker %zu before cv\n", id);
           std::unique_lock lk(_mtxs[id]);
-          _cvs[id].wait(lk, [&]() { return !_queues[id].empty(); });
-          printf("worker %zu after cv\n", id);
+          _cvs[id].wait(lk, [&]() { 
+            return !_queues[id].empty() || stop; 
+          });
+          //printf("worker %zu after cv\n", id);
           
-          //printf("worker %zu\n", i);
-          task = _queues[id].front();
+          task = std::move(_queues[id].front());
           _queues[id].pop();
-          //printf("thread id%zu\n", i);
         }
 
         _process(task);
@@ -237,18 +245,20 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
      
     while(1) {
       {
-        printf("master thread before cv\n");
+        //printf("master thread before cv\n");
         std::unique_lock lk(_mtxs[_num_threads]);
         _cvs[_num_threads].wait(lk, [&](){
-          return !_queues[_num_threads].empty(); }); 
-        printf("master thread after cv\n");
+          return !_queues[_num_threads].empty() || stop;
+        }); 
+        //printf("master thread after cv\n");
         
-        task = _queues[_num_threads].front();
+        task = std::move(_queues[_num_threads].front());
         _queues[_num_threads].pop();  
       }
-      //printf("scheduling thread\n");
+      
       auto policy = _rl.policy(task);
-      printf("policy[%ld,%d]\n", policy.first, policy.second);
+      printf("task %zu has policy[worker %ld, accelerator %d]\n", task->ID, policy.first, policy.second);
+      
       {
         std::unique_lock lk(_mtxs[policy.first]);
         //printf("get %zu's lock\n", policy.first);

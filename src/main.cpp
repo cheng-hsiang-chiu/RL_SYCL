@@ -5,7 +5,7 @@ int main() {
 
   //tgs::TGS scheduler(std::thread::hardware_concurrency());
   
-  tgs::TGS scheduler(6);
+  tgs::TGS scheduler(4);
 
   //scheduler.dump(std::cout);
 

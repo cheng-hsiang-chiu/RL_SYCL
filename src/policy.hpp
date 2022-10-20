@@ -31,12 +31,12 @@ public:
 template<typename T>
 inline std::pair<size_t, Accelerator>
 RL_Policy::policy(T&& task) {
-  std::cout << task->ID << ' '
-            << task->M  << ' '
-            << task->N  << ' '
-            << task->join_counter.load() << '\n';
+  //std::cout << task->ID << ' '
+  //          << task->M  << ' '
+  //          << task->N  << ' '
+  //          << task->join_counter.load() << '\n';
   
-  size_t thread_id = random_value()%6;
+  size_t thread_id = random_value()%4;
   return std::make_pair(thread_id, Accelerator::GPU); 
 }
 
