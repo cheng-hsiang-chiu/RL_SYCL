@@ -17,18 +17,7 @@
 
 #include "policy.hpp"
 
-
-
-
-
-
-
 namespace tgs {
-
-
-
-
-
 
 class RL_Policy;
 class TGS;
@@ -55,8 +44,6 @@ struct Task {
     ID{id}, M{m}, N{n} {} 
 };
 
-
-
 class ThreadPool {
 
 public:
@@ -80,6 +67,8 @@ public:
 
 private:
 
+  std::atomic<size_t> _processed = 0;
+
   size_t _num_threads;
 
   TGS* _tgs; 
@@ -92,7 +81,7 @@ private:
 
   std::vector<std::thread> _workers;
 
-  std::vector<std::queue<std::shared_ptr<Task>>> _queues;
+  std::vector<std::queue<Task*>> _queues;
 
   template<typename T>
   void _process(T&&);
@@ -116,7 +105,7 @@ private:
 
   size_t _E;
 
-  std::vector<std::shared_ptr<Task>> _tasks;
+  std::vector<std::unique_ptr<Task>> _tasks;
   
   //std::vector<std::shared_ptr<Task>> _sorted_tasks;
 
@@ -143,7 +132,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
     size_t id, m, n;
     std::cin >> id >> m >> n;
     //std::cout << id << ' ' << m << ' ' << n << '\n'; 
-    _tasks[id] = std::make_shared<Task>(id, m, n);
+    _tasks[id] = std::make_unique<Task>(id, m, n);
   }
   
   // parse the edges
@@ -159,26 +148,18 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
 
 inline void TGS::schedule() {
-  
-  size_t cnt_scheduled = 0; 
 
-  while (cnt_scheduled < _V) {
-    //printf("cnt_scheduled = %zu\n", cnt_scheduled);
-    for (auto& t : _tasks) {
-      if (t->scheduled == true) {
-        continue;
-      }
-      if (t->join_counter.load() == 0) {
-        printf("task %zu is master's queue\n", t->ID);
-        t->scheduled = true;
-        ++cnt_scheduled;
-        
-        _tpool.enqueue(t);  
-      }
+  std::vector<Task*> source;
+
+  for(const auto& t: _tasks) {
+    if(t->join_counter.load() == 0) {
+      source.push_back(t.get());
     }
   }
-  _tpool.stop = true;
-  _tpool.~ThreadPool();
+
+  for(auto task : source){
+    _tpool.enqueue(task);
+  }
 }
 
 
@@ -192,16 +173,8 @@ inline void TGS::dump(std::ostream& os) const {
   }
 }
 
-
-
-
 // destructor
 inline ThreadPool::~ThreadPool() {
-  if (stop == true) {
-    for (size_t i = 0; i <= _num_threads; ++i) {
-      _cvs[i].notify_all();
-    }
-  }
   for (auto& w : _workers) {
     w.join();
   }
@@ -217,10 +190,10 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   
   for (size_t i = 0; i < _num_threads; ++i) {
     
-    _workers.emplace_back([&]() {
-      std::shared_ptr<Task> task(nullptr);
-      size_t id = i;
-      
+    _workers.emplace_back([&, id=i]() {
+      Task* task(nullptr);
+      // TODO think about the bug
+      //size_t id = i;
       while (1) {
         {
           //printf("worker %zu before cv\n", id);
@@ -229,9 +202,15 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
             return !_queues[id].empty() || stop; 
           });
           //printf("worker %zu after cv\n", id);
+        
+          if(stop) {
+            return;
+          }
           
-          task = _queues[id].front();
-          _queues[id].pop();
+          if(!_queues[id].empty()) {
+            task = _queues[id].front();
+            _queues[id].pop();
+          }
         }
 
         _process(task);
@@ -241,7 +220,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
 
   // master thread does the scheduling
   _workers.emplace_back([&](){
-    std::shared_ptr<Task> task(nullptr);
+    Task* task(nullptr);
      
     while(1) {
       {
@@ -251,9 +230,15 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
           return !_queues[_num_threads].empty() || stop;
         }); 
         //printf("master thread after cv\n");
+
+        if(stop) {
+          return;
+        }
         
-        task = _queues[_num_threads].front();
-        _queues[_num_threads].pop();  
+        if(!_queues[_num_threads].empty()) {
+          task = _queues[_num_threads].front();
+          _queues[_num_threads].pop();  
+        }
       }
       
       auto policy = _rl.policy(task);
@@ -286,15 +271,27 @@ inline void ThreadPool::enqueue(T&& task) {
 
 template<typename T>
 inline void ThreadPool::_process(T&& task) {
+
   std::ostringstream oss;
   oss << "Thread " << std::this_thread::get_id() 
       << " is processing task " << task->ID << std::endl;
   printf("%s\n", oss.str().c_str());
 
+  // TODO: add SYCL kernel based on the policy
 
+  // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
     //std::cout << "tid = " << tid << '\n';
-    _tgs->_tasks[tid]->join_counter.fetch_sub(1, std::memory_order_acq_rel);  
+    if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
+      enqueue(_tgs->_tasks[tid].get());
+    }  
+  }
+
+  if (_processed.fetch_add(1) + 1 == _tgs->_V) {
+    stop = true;
+    for(auto& cv : _cvs) {
+      cv.notify_one();
+    }
   }
 }
 

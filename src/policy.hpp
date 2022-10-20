@@ -12,11 +12,7 @@ enum Accelerator {
   CPU
 };
 
-static std::minstd_rand engine{std::random_device{}()};
-static std::uniform_int_distribution<size_t> distribution;
-static size_t random_value() {
-  return distribution(engine);
-}
+
 
 class RL_Policy {
 
@@ -28,6 +24,7 @@ public:
 };
 
 
+// TODO:
 template<typename T>
 inline std::pair<size_t, Accelerator>
 RL_Policy::policy(T&& task) {
@@ -36,7 +33,9 @@ RL_Policy::policy(T&& task) {
   //          << task->N  << ' '
   //          << task->join_counter.load() << '\n';
   
-  size_t thread_id = random_value()%4;
+  static std::minstd_rand engine{std::random_device{}()};
+  static std::uniform_int_distribution<size_t> distribution;
+  size_t thread_id = distribution(engine) % 4;
   return std::make_pair(thread_id, Accelerator::GPU); 
 }
 
