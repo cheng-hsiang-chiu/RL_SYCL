@@ -9,7 +9,7 @@ MESSAGE(STATUS "PROJECT_SOURCE_DIR: " ${PROJECT_SOURCE_DIR})
 MESSAGE(STATUS "CMAKE_CURRENT_SOURCE_DIR: " ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(CMAKE_CXX_COMPILER "clang++")
-set(CMAKE_CXX_FLAGS "-std=c++17 -O3 -pthread")
+set(CMAKE_CXX_FLAGS "-std=c++17 -O3 -pthread -DCMAKE_CXX_FLAGS='-fsanitize=thread -g'")
 set(FM_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
 
 add_library(error_settings INTERFACE)

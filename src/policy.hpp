@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utility>
+#include <random>
 #include "tgs.hpp"
 
 
@@ -11,7 +12,11 @@ enum Accelerator {
   CPU
 };
 
-
+static std::minstd_rand engine{std::random_device{}()};
+static std::uniform_int_distribution<size_t> distribution;
+static size_t random_value() {
+  return distribution(engine);
+}
 
 class RL_Policy {
 
@@ -29,9 +34,9 @@ RL_Policy::policy(T&& task) {
   std::cout << task->ID << ' '
             << task->M  << ' '
             << task->N  << ' '
-            << task->dependency << '\n';
+            << task->join_counter.load() << '\n';
   
-  size_t thread_id = 0;
+  size_t thread_id = random_value()%6;
   return std::make_pair(thread_id, Accelerator::GPU); 
 }
 

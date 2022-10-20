@@ -10,10 +10,25 @@
 #include <condition_variable>
 #include <mutex>
 #include <queue>
+#include <string>
+#include <sstream>
+
+//#include <CL/sycl.hpp>
 
 #include "policy.hpp"
 
+
+
+
+
+
+
 namespace tgs {
+
+
+
+
+
 
 class RL_Policy;
 class TGS;
@@ -27,8 +42,14 @@ struct Task {
   // the column dimension of the matrix
   size_t N;
 
-  // atomic dependency
-  std::atomic<int> dependency = 0;
+  // atomic join_counter
+  std::atomic<int> join_counter = 0;
+
+  // if scheduled
+  bool scheduled = false;
+
+  // Task executed on accelerator 
+  Accelerator accelerator;
 
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n} {} 
@@ -57,17 +78,19 @@ public:
 
 private:
 
+  size_t _num_threads;
+
   TGS* _tgs; 
 
   RL_Policy _rl;
 
-  std::mutex _mtx;
+  std::vector<std::mutex> _mtxs;
 
-  std::condition_variable _cv;
+  std::vector<std::condition_variable> _cvs;
 
   std::vector<std::thread> _workers;
 
-  std::queue<std::shared_ptr<Task>> _queue_tasks;
+  std::vector<std::queue<std::shared_ptr<Task>>> _queues;
 
   template<typename T>
   void _process(T&&);
@@ -93,13 +116,13 @@ private:
 
   std::vector<std::shared_ptr<Task>> _tasks;
   
-  std::vector<std::shared_ptr<Task>> _sorted_tasks;
+  //std::vector<std::shared_ptr<Task>> _sorted_tasks;
 
   std::vector<std::vector<size_t>> _graph;
  
   ThreadPool _tpool; 
 
-  void _topological_sort();  
+  //void _topological_sort();  
 };
 
 
@@ -112,14 +135,13 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
   _graph.resize(_V);
   _tasks.resize(_V);
-  _sorted_tasks.resize(_V);
 
   // parse the meta data of every task
   for (size_t i = 0; i < _V; ++i) {
     size_t id, m, n;
     std::cin >> id >> m >> n;
-  
-    _tasks[id] = std::make_shared<Task>(id, m, n);;
+    //std::cout << id << ' ' << m << ' ' << n << '\n'; 
+    _tasks[id] = std::make_shared<Task>(id, m, n);
   }
   
   // parse the edges
@@ -128,75 +150,44 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
     std::cin >> from >> to;
 
     _graph[from].push_back(to);
-    ++(_tasks[to]->dependency);
-  }
 
-  _topological_sort();
-}
-
-
-// topological sort on _tasks
-// the sorted tasks are kept in _sorted_tasks
-inline void TGS::_topological_sort() {
-  size_t cnt = 0;
-  std::queue<size_t> q;
-
-  std::vector<int> temp(_V);
-  // push tasks of zero dependency
-  for (auto& t : _tasks) {
-    if (t->dependency == 0) {
-      q.push(t->ID); 
-    }
-    temp[t->ID] = t->dependency;
-  }
-
-  while (!q.empty()) {
-    size_t id = q.front();
-    _sorted_tasks[cnt++] = _tasks[id];
-    q.pop();
-
-    for (size_t i = 0; i < _graph[id].size(); ++i) {
-      if (--(temp[_graph[id][i]]) == 0) {
-        q.push(_tasks[_graph[id][i]]->ID); 
-      }
-    }
+    _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
   }
 }
 
 
 inline void TGS::schedule() {
-  while (!_sorted_tasks.empty()) {
-    if ((*_sorted_tasks.begin())->dependency == 0) {
-      _tpool.enqueue(*_sorted_tasks.begin()); 
-      _sorted_tasks.erase(_sorted_tasks.begin());
+  
+  size_t cnt_scheduled = 0; 
+
+  while (cnt_scheduled < _V) {
+    //printf("cnt_scheduled = %zu\n", cnt_scheduled);
+    for (auto& t : _tasks) {
+      if (t->scheduled == true) {
+        continue;
+      }
+      if (t->join_counter.load() == 0) {
+        printf("task %zu is scheduled\n", t->ID);
+        t->scheduled = true;
+        ++cnt_scheduled;
+        
+        _tpool.enqueue(t);  
+      }
     }
   }
+  _tpool.~ThreadPool();
 }
-
-
-
-
-
 
 
 
 inline void TGS::dump(std::ostream& os) const {
-  //for (auto& task : _tasks) {
-  //  os << "Task["            << task->ID         << "]\n"
-  //     << "   M : "          << task->M          << '\n'
-  //     << "   N : "          << task->N          << '\n'
-  //     << "   dependency : " << task->dependency << '\n';
-  //}
-  
-  for (auto& task : _sorted_tasks) {
-    os << "Sorted Task["     << task->ID         << "]\n"
-       << "   M : "          << task->M          << '\n'
-       << "   N : "          << task->N          << '\n'
-       << "   dependency : " << task->dependency << '\n';
+  for (auto& task : _tasks) {
+    os << "Task["              << task->ID           << "]\n"
+       << "   M : "            << task->M            << '\n'
+       << "   N : "            << task->N            << '\n'
+       << "   join_counter : " << task->join_counter << '\n';
   }
 }
-
-
 
 
 
@@ -210,55 +201,92 @@ inline ThreadPool::~ThreadPool() {
 
 
 // constructor
-inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) { 
+inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
+  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1) { 
+   
+  _num_threads = num_threads;
   _tgs = t;
-  for (size_t i = 0; i < num_threads; ++i) {
+  
+  for (size_t i = 0; i < _num_threads; ++i) {
+    
     _workers.emplace_back([&]() {
-      std::shared_ptr<Task> task;
+      std::shared_ptr<Task> task(nullptr);
+      size_t id = i;
       
       while (1) {
         {
-          std::unique_lock lk(_mtx);
-          _cv.wait(lk, [&]() { return !_queue_tasks.empty(); });
+          printf("worker %zu before cv\n", id);
+          std::unique_lock lk(_mtxs[id]);
+          _cvs[id].wait(lk, [&]() { return !_queues[id].empty(); });
+          printf("worker %zu after cv\n", id);
           
-          task = _queue_tasks.front();
-          _queue_tasks.pop();
+          //printf("worker %zu\n", i);
+          task = _queues[id].front();
+          _queues[id].pop();
+          //printf("thread id%zu\n", i);
         }
 
-        auto policy = _rl.policy(task);
         _process(task);
       }
     });
   }
+
+  // master thread does the scheduling
+  _workers.emplace_back([&](){
+    std::shared_ptr<Task> task(nullptr);
+     
+    while(1) {
+      {
+        printf("master thread before cv\n");
+        std::unique_lock lk(_mtxs[_num_threads]);
+        _cvs[_num_threads].wait(lk, [&](){
+          return !_queues[_num_threads].empty(); }); 
+        printf("master thread after cv\n");
+        
+        task = _queues[_num_threads].front();
+        _queues[_num_threads].pop();  
+      }
+      //printf("scheduling thread\n");
+      auto policy = _rl.policy(task);
+      printf("policy[%ld,%d]\n", policy.first, policy.second);
+      {
+        std::unique_lock lk(_mtxs[policy.first]);
+        //printf("get %zu's lock\n", policy.first);
+        task->accelerator = policy.second;
+        _queues[policy.first].emplace(task);
+      }
+      //printf("release %zu's lock\n", policy.first);
+      
+      _cvs[policy.first].notify_one();
+    }
+  });
 }
 
 
 template<typename T>
 inline void ThreadPool::enqueue(T&& task) {
   {
-    std::unique_lock lk(_mtx);
-
-    _queue_tasks.emplace(std::forward<T>(task));
+    std::unique_lock lk(_mtxs[_num_threads]);
+    _queues[_num_threads].emplace(std::forward<T>(task));
   }
-
-  _cv.notify_one();
+  //printf("finish enqueue task\n");
+  _cvs[_num_threads].notify_one();
 }
 
 
 template<typename T>
 inline void ThreadPool::_process(T&& task) {
-  std::cout << "Thread " << std::this_thread::get_id()
-            << " is processing task " << task->ID << '\n';
+  std::ostringstream oss;
+  oss << "Thread " << std::this_thread::get_id() 
+      << " is processing task " << task->ID << std::endl;
+  printf("%s\n", oss.str().c_str());
+
 
   for (auto& tid : _tgs->_graph[task->ID]) {
-    std::cout << "tid = " << tid << '\n';
-    _tgs->_sorted_tasks[tid]->dependency.fetch_sub(1, std::memory_order_acq_rel);  
+    //std::cout << "tid = " << tid << '\n';
+    _tgs->_tasks[tid]->join_counter.fetch_sub(1, std::memory_order_acq_rel);  
   }
 }
-       
-
-
-
 
 
 

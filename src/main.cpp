@@ -3,10 +3,11 @@
 
 int main() {
 
+  //tgs::TGS scheduler(std::thread::hardware_concurrency());
+  
+  tgs::TGS scheduler(6);
 
-  tgs::TGS scheduler(std::thread::hardware_concurrency());
-
-  scheduler.dump(std::cout);
+  //scheduler.dump(std::cout);
 
   scheduler.schedule();
 
