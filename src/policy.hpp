@@ -36,7 +36,18 @@ RL_Policy::policy(T&& task) {
   static std::minstd_rand engine{std::random_device{}()};
   static std::uniform_int_distribution<size_t> distribution;
   size_t thread_id = distribution(engine) % 4;
-  return std::make_pair(thread_id, Accelerator::GPU); 
+
+  Accelerator accelerator;
+  switch(distribution(engine)%2) {
+    case 0:
+      accelerator = Accelerator::GPU;
+    break;
+    case 1:
+      accelerator = Accelerator::CPU;
+    break;
+  }
+
+  return std::make_pair(thread_id, accelerator); 
 }
 
 

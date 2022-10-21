@@ -13,7 +13,7 @@
 #include <string>
 #include <sstream>
 
-//#include <CL/sycl.hpp>
+#include <CL/sycl.hpp>
 
 #include "policy.hpp"
 
@@ -83,6 +83,10 @@ private:
 
   std::vector<std::queue<Task*>> _queues;
 
+  std::vector<sycl::queue> _sycl_gpu_queues;
+  
+  //std::vector<sycl::queue> _sycl_cpu_queues;
+  
   template<typename T>
   void _process(size_t, T&&);
 };
@@ -185,18 +189,19 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   
   for (size_t i = 0; i < _num_threads; ++i) {
     
+    // every worker has its own sycl queue  
+    _sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector{}});
+
     _workers.emplace_back([&, id=i]() {
       Task* task(nullptr);
       // TODO think about the bug
       //size_t id = i;
       while (1) {
         {
-          //printf("worker %zu before cv\n", id);
           std::unique_lock<std::mutex> lk(_mtxs[id]);
           _cvs[id].wait(lk, [&]() { 
             return !_queues[id].empty() || stop; 
           });
-          //printf("worker %zu after cv\n", id);
         
           if(stop) {
             return;
@@ -241,7 +246,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       
       printf("current system loadavg %.3lf %.3lf %.3lf\n", loadavg[0], loadavg[1], loadavg[2]);
       auto policy = _rl.policy(task);
-      printf("Master decide to run task %zu with the policy: worker %ld, accelerator %d\n", task->ID, policy.first, policy.second);
+      printf("Master decides to run task %zu with the policy: worker %ld, accelerator %d\n", task->ID, policy.first, policy.second);
       
       {
         std::unique_lock<std::mutex> lk(_mtxs[policy.first]);
@@ -271,11 +276,41 @@ template<typename T>
 inline void ThreadPool::_process(size_t id, T&& task) {
 
   std::ostringstream oss;
-  oss << "Worker " << id << " is processing task " << task->ID << std::endl;
-  printf("%s\n", oss.str().c_str());
 
   // TODO: add SYCL kernel based on the policy
-  std::this_thread::sleep_for(std::chrono::milliseconds(task->M * task->N));
+  //std::this_thread::sleep_for(std::chrono::milliseconds(task->M * task->N));
+
+  oss << "Worker "        << id 
+      << " submits task " << task->ID 
+      << " to device " 
+      << _sycl_gpu_queues[id].get_device().get_info<sycl::info::device::name>()
+      << std::endl;
+
+  printf("%s", oss.str().c_str());
+
+  oss.str("");
+
+  size_t M = task->M;
+  auto R = sycl::range<1>(M);
+  std::vector<int> v(M, 10);
+  
+  // Buffer takes ownership of the data stored in vector.  
+  sycl::buffer buf(v);
+  
+  _sycl_gpu_queues[id].submit([&](sycl::handler& h) {
+    sycl::accessor a(buf, h);
+    h.parallel_for(R, [=](auto i) { a[i] -= 2; });
+  });
+  
+  sycl::host_accessor b(buf, sycl::read_only);
+
+  oss << "Worker " << id << " has result : ";  
+  for (size_t i = 0; i < M; i++) {
+    oss << b[i] << ' ';
+  }
+  printf("%s\n", oss.str().c_str());
+  oss.str("");
+
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
