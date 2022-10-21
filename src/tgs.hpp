@@ -34,6 +34,9 @@ struct Task {
   // atomic join_counter
   std::atomic<int> join_counter = 0;
 
+  // atomic seed
+  std::atomic<int> seed = 0;
+
   // if scheduled
   bool scheduled = false;
 
@@ -278,42 +281,93 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   std::ostringstream oss;
 
   // TODO: add SYCL kernel based on the policy
-  //std::this_thread::sleep_for(std::chrono::milliseconds(task->M * task->N));
 
+  // offload to gpu for now
+  sycl::queue& q = _sycl_gpu_queues[id];
+  
   oss << "Worker "        << id 
       << " submits task " << task->ID 
       << " to device " 
-      << _sycl_gpu_queues[id].get_device().get_info<sycl::info::device::name>()
+      << q.get_device().get_info<sycl::info::device::name>()
       << std::endl;
-
   printf("%s", oss.str().c_str());
-
   oss.str("");
 
   size_t M = task->M;
-  auto R = sycl::range<1>(M);
-  std::vector<int> v(M, 10);
-  
-  // Buffer takes ownership of the data stored in vector.  
-  sycl::buffer buf(v);
-  
-  _sycl_gpu_queues[id].submit([&](sycl::handler& h) {
-    sycl::accessor a(buf, h);
-    h.parallel_for(R, [=](auto i) { a[i] -= 2; });
-  });
-  
-  sycl::host_accessor b(buf, sycl::read_only);
+  size_t N = task->N;
 
-  oss << "Worker " << id << " has result : ";  
-  for (size_t i = 0; i < M; i++) {
-    oss << b[i] << ' ';
-  }
-  printf("%s\n", oss.str().c_str());
+  oss << "M = " << M << " N = " << N 
+      <<" task->seed = " << task->seed.load()
+      << " id = " << id
+      << std::endl;
+  printf("%s", oss.str().c_str());
   oss.str("");
 
+  // declare three USM pointers to three matrixes
+  // da points to matrix a, db points to matrix b, dc points to matrix c
+  int* da = sycl::malloc_shared<int>(M*N, q);
+  int* db = sycl::malloc_shared<int>(N*M, q);
+  int* dc = sycl::malloc_shared<int>(M*M, q);
+
+  size_t old_seed = task->seed;
+
+  // initialize matrix a
+  q.parallel_for(
+    sycl::range<1>(M*N),
+    [=](sycl::id<1> i) {
+      da[i] = old_seed - id;
+    }
+  );
+
+  // initialize matrix b
+  q.parallel_for(
+    sycl::range<1>(N*M),
+    [=](sycl::id<1> i) {
+      db[i] = old_seed + id;
+    }
+  ).wait();
+
+  auto _M = (M % 16 == 0) ? M : (M + 16 - M % 16);
+
+  // matrix multiplication c = a * b
+  q.parallel_for(
+    sycl::nd_range<2>{sycl::range<2>(_M, _M), sycl::range<2>(16, 16)},
+    [=](sycl::nd_item<2> item) {
+    
+      int row = item.get_global_id(0);
+      int col = item.get_global_id(1);
+      
+      if(row < M && col < M) {
+        int sum = 0;
+        
+        for(int n = 0; n < N; n++) {
+            sum += da[row * N + n] * db[n * M + col];
+        }
+        dc[row * M + col] = sum;
+      }
+    }
+  ).wait();
+
+  size_t new_seed = 0;
+
+  for (size_t i = 0; i < M*M; i++) {
+    new_seed += *(dc+i);
+  }
+
+  oss << "Worker "        << id 
+      << " gets seed " << new_seed 
+      << " for its descendants" 
+      << std::endl;
+
+  printf("%s", oss.str().c_str());
+  oss.str("");
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
+
+    // set descendants' seed
+    _tgs->_tasks[tid]->seed.store(new_seed);
+    
     if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
       enqueue(_tgs->_tasks[tid].get());
     }  
