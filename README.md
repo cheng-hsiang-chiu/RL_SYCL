@@ -28,6 +28,11 @@ Then the edge (0, 2) denotes that vertex 0 connecting to vertex 2.
 ```
 
 
+## SYCL Compiler Installed
+Before building the executable, please make sure SYCL compiler is successfully installed.
+The link of the installation instructions is https://intel.github.io/llvm-docs/GetStartedGuide.html 
+
+
 ## Build
 To build the executable, please follow the instructions below. The default compiler is clang++.
 ```
