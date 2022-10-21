@@ -107,13 +107,9 @@ private:
 
   std::vector<std::unique_ptr<Task>> _tasks;
   
-  //std::vector<std::shared_ptr<Task>> _sorted_tasks;
-
   std::vector<std::vector<size_t>> _graph;
  
   ThreadPool _tpool; 
-
-  //void _topological_sort();  
 };
 
 
@@ -131,7 +127,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
   for (size_t i = 0; i < _V; ++i) {
     size_t id, m, n;
     std::cin >> id >> m >> n;
-    //std::cout << id << ' ' << m << ' ' << n << '\n'; 
+    
     _tasks[id] = std::make_unique<Task>(id, m, n);
   }
   
@@ -141,7 +137,6 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
     std::cin >> from >> to;
 
     _graph[from].push_back(to);
-
     _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
   }
 }
@@ -224,12 +219,10 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
      
     while(1) {
       {
-        //printf("master thread before cv\n");
         std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
         _cvs[_num_threads].wait(lk, [&](){
           return !_queues[_num_threads].empty() || stop;
         }); 
-        //printf("master thread after cv\n");
 
         if(stop) {
           return;
@@ -252,11 +245,9 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       
       {
         std::unique_lock<std::mutex> lk(_mtxs[policy.first]);
-        //printf("get %zu's lock\n", policy.first);
         task->accelerator = policy.second;
         _queues[policy.first].emplace(task);
       }
-      //printf("release %zu's lock\n", policy.first);
       
       _cvs[policy.first].notify_one();
 
@@ -272,7 +263,6 @@ inline void ThreadPool::enqueue(T&& task) {
     std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
     _queues[_num_threads].emplace(std::forward<T>(task));
   }
-  //printf("finish enqueue task\n");
   _cvs[_num_threads].notify_one();
 }
 
@@ -289,7 +279,6 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
-    //std::cout << "tid = " << tid << '\n';
     if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
       enqueue(_tgs->_tasks[tid].get());
     }  
