@@ -51,8 +51,6 @@ class ThreadPool {
 
 public:
 
-  bool stop = false;
-  
   ThreadPool(const ThreadPool &) = delete;
   
   ThreadPool(ThreadPool &&) = delete;
@@ -69,6 +67,8 @@ public:
   void enqueue(T&&);
 
 private:
+
+  bool _stop = false;
 
   std::atomic<size_t> _processed = 0;
 
@@ -203,10 +203,10 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         {
           std::unique_lock<std::mutex> lk(_mtxs[id]);
           _cvs[id].wait(lk, [&]() { 
-            return !_queues[id].empty() || stop; 
+            return !_queues[id].empty() || _stop; 
           });
         
-          if(stop) {
+          if(_stop) {
             return;
           }
           
@@ -229,10 +229,10 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       {
         std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
         _cvs[_num_threads].wait(lk, [&](){
-          return !_queues[_num_threads].empty() || stop;
+          return !_queues[_num_threads].empty() || _stop;
         }); 
 
-        if(stop) {
+        if(_stop) {
           return;
         }
         
@@ -309,7 +309,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   int* db = sycl::malloc_shared<int>(N*M, q);
   int* dc = sycl::malloc_shared<int>(M*M, q);
 
-  size_t old_seed = task->seed;
+  size_t old_seed = task->seed.load();
 
   // initialize matrix a
   q.parallel_for(
@@ -374,7 +374,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   }
 
   if (_processed.fetch_add(1) + 1 == _tgs->_V) {
-    stop = true;
+    _stop = true;
     for(auto& cv : _cvs) {
       cv.notify_one();
     }
