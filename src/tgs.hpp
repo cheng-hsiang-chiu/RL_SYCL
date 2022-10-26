@@ -34,14 +34,14 @@ struct Task {
   // atomic join_counter
   std::atomic<int> join_counter = 0;
 
-  // atomic seed
-  std::atomic<int> seed = 0;
-
   // if scheduled
   bool scheduled = false;
 
   // Task executed on accelerator 
   Accelerator accelerator;
+
+  // ID of the worker that processes the task 
+  int worker_id = -1;
 
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n} {} 
@@ -66,7 +66,11 @@ public:
   template<typename T>
   void enqueue(T&&);
 
+  void set_MM(const size_t);
+
 private:
+
+  size_t _MM = 0;
 
   bool _stop = false;
 
@@ -86,9 +90,11 @@ private:
 
   std::vector<std::queue<Task*>> _queues;
 
+  std::vector<std::vector<int>> _results;
+
   std::vector<sycl::queue> _sycl_gpu_queues;
   
-  //std::vector<sycl::queue> _sycl_cpu_queues;
+  std::vector<sycl::queue> _sycl_cpu_queues;
   
   template<typename T>
   void _process(size_t, T&&);
@@ -111,6 +117,9 @@ private:
   size_t _V;
 
   size_t _E;
+
+  // maximum row of matrix
+  size_t _MM = 0;
 
   std::vector<std::unique_ptr<Task>> _tasks;
   
@@ -136,7 +145,10 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
     std::cin >> id >> m >> n;
     
     _tasks[id] = std::make_unique<Task>(id, m, n);
+    
+    _MM = _MM > m ? _MM : m;
   }
+  _tpool.set_MM(_MM);
   
   // parse the edges
   for (size_t i = 0; i < _E; ++i) {
@@ -185,15 +197,17 @@ inline ThreadPool::~ThreadPool() {
 
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
-  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1) { 
+  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1),
+  _results(num_threads) { 
    
   _num_threads = num_threads;
   _tgs = t;
-  
+ 
   for (size_t i = 0; i < _num_threads; ++i) {
-    
+
     // every worker has its own sycl queue  
     _sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector{}});
+    _sycl_cpu_queues.emplace_back(sycl::queue{sycl::host_selector{}});
 
     _workers.emplace_back([&, id=i]() {
       Task* task(nullptr);
@@ -254,6 +268,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       {
         std::unique_lock<std::mutex> lk(_mtxs[policy.first]);
         task->accelerator = policy.second;
+        task->worker_id = policy.first;
         _queues[policy.first].emplace(task);
       }
       
@@ -275,6 +290,17 @@ inline void ThreadPool::enqueue(T&& task) {
 }
 
 
+// set the maximum row of a matrix
+inline void ThreadPool::set_MM(const size_t mm) {
+  _MM = mm;
+  
+  for (size_t i = 0; i < _num_threads; ++i) {  
+    // resize and initialize every result 
+    _results[i].resize(_MM * _MM, 0);
+  }
+}
+
+
 template<typename T>
 inline void ThreadPool::_process(size_t id, T&& task) {
 
@@ -282,40 +308,56 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
   // TODO: add SYCL kernel based on the policy
 
-  // offload to gpu for now
-  sycl::queue& q = _sycl_gpu_queues[id];
-  
+  // offload to gpu or cpu
+  sycl::queue q;
+
+  try {
+    if (task->accelerator == Accelerator::CPU) {
+      q = _sycl_cpu_queues[id];
+    }
+    else {
+      q = _sycl_gpu_queues[id];
+    }
+  } catch (sycl::exception const& e) {
+    oss << "Cannot select a GPU : "
+        << e.what() << '\n'
+        << "Using a CPU device\n";
+    printf("%s", oss.str().c_str());
+    oss.str("");
+  }
+
   oss << "Worker "        << id 
       << " submits task " << task->ID 
-      << " to device " 
+      << " to " 
       << q.get_device().get_info<sycl::info::device::name>()
       << std::endl;
   printf("%s", oss.str().c_str());
   oss.str("");
 
+  int sum = 0;
+  for (auto& r : _results[id]) {
+    sum += r;
+  }
+  
+  //oss << "sum = " << sum << std::endl;
+  //printf("%s", oss.str().c_str());
+  //oss.str("");
+
   size_t M = task->M;
   size_t N = task->N;
 
-  oss << "M = " << M << " N = " << N 
-      <<" task->seed = " << task->seed.load()
-      << " id = " << id
-      << std::endl;
-  printf("%s", oss.str().c_str());
-  oss.str("");
-
   // declare three USM pointers to three matrixes
-  // da points to matrix a, db points to matrix b, dc points to matrix c
+  // da points to matrix a, db to matrix b, dc to matrix c
+
   int* da = sycl::malloc_shared<int>(M*N, q);
   int* db = sycl::malloc_shared<int>(N*M, q);
   int* dc = sycl::malloc_shared<int>(M*M, q);
-
-  size_t old_seed = task->seed.load();
 
   // initialize matrix a
   q.parallel_for(
     sycl::range<1>(M*N),
     [=](sycl::id<1> i) {
-      da[i] = old_seed - id;
+      da[i] = sum - id;
     }
   );
 
@@ -323,7 +365,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   q.parallel_for(
     sycl::range<1>(N*M),
     [=](sycl::id<1> i) {
-      db[i] = old_seed + id;
+      db[i] = sum + id;
     }
   ).wait();
 
@@ -348,26 +390,16 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     }
   ).wait();
 
-  size_t new_seed = 0;
 
+  // copy result back to worker's local memory
   for (size_t i = 0; i < M*M; i++) {
-    new_seed += *(dc+i);
+    _results[id][i%(_MM*_MM)] = *(dc+i);
   }
 
-  oss << "Worker "        << id 
-      << " gets seed " << new_seed 
-      << " for its descendants" 
-      << std::endl;
-
-  printf("%s", oss.str().c_str());
-  oss.str("");
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
 
-    // set descendants' seed
-    _tgs->_tasks[tid]->seed.store(new_seed);
-    
     if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
       enqueue(_tgs->_tasks[tid].get());
     }  
