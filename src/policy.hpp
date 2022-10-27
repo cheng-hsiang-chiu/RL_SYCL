@@ -17,10 +17,13 @@ enum Accelerator {
 class RL_Policy {
 
 public:
-  RL_Policy() = default;
+  RL_Policy(const size_t t) : _num_threads{t} {};
 
   template<typename T>
   std::pair<size_t, Accelerator> policy(T&&);
+
+private:
+  size_t _num_threads;
 };
 
 
@@ -35,7 +38,7 @@ RL_Policy::policy(T&& task) {
   
   static std::minstd_rand engine{std::random_device{}()};
   static std::uniform_int_distribution<size_t> distribution;
-  size_t thread_id = distribution(engine) % 4;
+  size_t thread_id = distribution(engine) % _num_threads;
 
   Accelerator accelerator;
   switch(distribution(engine)%2) {

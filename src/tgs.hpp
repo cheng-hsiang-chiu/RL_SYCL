@@ -198,7 +198,7 @@ inline ThreadPool::~ThreadPool() {
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1),
-  _results(num_threads) { 
+  _results(num_threads), _rl{num_threads} { 
    
   _num_threads = num_threads;
   _tgs = t;
