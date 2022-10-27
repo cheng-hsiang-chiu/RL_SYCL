@@ -4,6 +4,7 @@
 - CMakeLists.txt : cmake file
 - inputs : input files
 - src : source code
+- env.sh : script to export environment variables
 
 
 ## Input Format
@@ -31,6 +32,15 @@ Then the edge (0, 2) denotes that vertex 0 connecting to vertex 2.
 ## SYCL Compiler Installed
 Before building the executable, please make sure SYCL compiler is successfully installed.
 The link of the installation instructions is https://intel.github.io/llvm-docs/GetStartedGuide.html 
+
+
+## Environment Setup
+To build and run, please export some environment variables.
+We provide `env.sh` to export these variables.
+Simply follow the instructions below.
+```
+source env.sh
+```
 
 
 ## Build
