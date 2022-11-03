@@ -27,6 +27,8 @@ Then the edge (0, 2) denotes that vertex 0 connecting to vertex 2.
 1 2
 2 3 
 ```
+The following figure shows the above task graph.
+![](figure/demo_task_graph.ps)
 
 
 ## SYCL Compiler Installed
