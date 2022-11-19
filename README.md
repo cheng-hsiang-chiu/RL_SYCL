@@ -4,7 +4,8 @@
 - CMakeLists.txt : cmake file
 - inputs : input files
 - src : source code
-
+- input_generator : generator to generate inputs
+- python_visualization : script to visualize histogram of time interval
 
 ## Input Format
 The input files have the following format.
@@ -42,4 +43,24 @@ To run the executable, please follow the instruction below.
 ```
 cd build
 ./main < ../inputs/1.in
+```
+
+## Generate new input files
+There are two generators. One is to generate big input file with around 10000 tasks.
+The other is to generate small input with around 50 tasks.
+Default generated task size is 10000 and 50 for big and small generator, respectively.
+To generate an input file of 30000 tasks, please follow the instructions below.
+The generated file is placed in `inputs` directory with the number of tasks as the file name. 
+```
+cd input_generator
+python3 generator_big.py 30000
+``` 
+
+## Visualize the time interval
+After running the executable, we can visualize the time interval between two RL inferences.
+A `timestamp.csv` is generated in `python_visualization` directory,
+please use `visualization.py` to plot a histogram.
+```
+cd python_visualization
+python3 visualization.py
 ```
