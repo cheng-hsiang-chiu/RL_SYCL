@@ -4,8 +4,9 @@
 int main() {
 
   //tgs::TGS scheduler(std::thread::hardware_concurrency());
-  
-  tgs::TGS scheduler(4);
+
+  // use 8 worker threads  
+  tgs::TGS scheduler(8);
 
   //scheduler.dump(std::cout);
 
