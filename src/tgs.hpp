@@ -12,6 +12,8 @@
 #include <queue>
 #include <string>
 #include <sstream>
+#include <chrono>
+#include <fstream>
 
 //#include <CL/sycl.hpp>
 
@@ -81,10 +83,12 @@ private:
 
   std::vector<std::thread> _workers;
 
-  std::vector<std::queue<Task*>> _queues;
+  std::vector<std::deque<Task*>> _queues;
 
   template<typename T>
   void _process(size_t, T&&);
+
+  void _state_query() ;
 };
 
 // task graph scheduler class  
@@ -107,13 +111,13 @@ private:
 
   std::vector<std::unique_ptr<Task>> _tasks;
   
-  //std::vector<std::shared_ptr<Task>> _sorted_tasks;
-
   std::vector<std::vector<size_t>> _graph;
  
+  std::vector<std::chrono::high_resolution_clock::time_point> _timestamp;
+  
   ThreadPool _tpool; 
 
-  //void _topological_sort();  
+  void _dump_timestamp() const;
 };
 
 
@@ -126,12 +130,12 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
   _graph.resize(_V);
   _tasks.resize(_V);
-
+  _timestamp.resize(_V);
+  
   // parse the meta data of every task
   for (size_t i = 0; i < _V; ++i) {
     size_t id, m, n;
     std::cin >> id >> m >> n;
-    //std::cout << id << ' ' << m << ' ' << n << '\n'; 
     _tasks[id] = std::make_unique<Task>(id, m, n);
   }
   
@@ -163,7 +167,6 @@ inline void TGS::schedule() {
 }
 
 
-
 inline void TGS::dump(std::ostream& os) const {
   for (auto& task : _tasks) {
     os << "Task["              << task->ID           << "]\n"
@@ -183,36 +186,37 @@ inline ThreadPool::~ThreadPool() {
 
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
-  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1) { 
+  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1), _rl{num_threads} { 
    
   _num_threads = num_threads;
   _tgs = t;
   
   for (size_t i = 0; i < _num_threads; ++i) {
     
+    // definitions of the worker 
     _workers.emplace_back([&, id=i]() {
       Task* task(nullptr);
-      // TODO think about the bug
-      //size_t id = i;
       while (1) {
         {
-          //printf("worker %zu before cv\n", id);
           std::unique_lock<std::mutex> lk(_mtxs[id]);
           _cvs[id].wait(lk, [&]() { 
             return !_queues[id].empty() || stop; 
           });
-          //printf("worker %zu after cv\n", id);
-        
+       
+          // the scheduler has scheduled all tasks 
           if(stop) {
             return;
           }
           
+          // worker i has tasks in its queue
+          // and pops a task from the queue
           if(!_queues[id].empty()) {
             task = _queues[id].front();
-            _queues[id].pop();
+            _queues[id].pop_front();
           }
         }
 
+        // start to process the task
         _process(id, task);
       }
     });
@@ -221,58 +225,67 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   // master thread does the scheduling
   _workers.emplace_back([&](){
     Task* task(nullptr);
+    size_t idx = 0;
      
     while(1) {
       {
-        //printf("master thread before cv\n");
         std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
         _cvs[_num_threads].wait(lk, [&](){
           return !_queues[_num_threads].empty() || stop;
         }); 
-        //printf("master thread after cv\n");
 
+        // the scheduler has scheduled all tasks
         if(stop) {
           return;
         }
-        
+       
+        // master has tasks in its queue
+        // and pops a task from its queue 
         if(!_queues[_num_threads].empty()) {
           task = _queues[_num_threads].front();
-          _queues[_num_threads].pop();  
+          _queues[_num_threads].pop_front();  
         }
       }
       
-      // TODO: yile
-      // just an example to output load
-      double loadavg[3];
-      getloadavg(loadavg, 3);
+      // record the timstamp before master calls RL for an action recommendation
+      // timestamp is used for plotting histogram only
+      // could comment the line if not necessary
+      _tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now();
+
+      // use _state_query to query the state information  
+      //_state_query();
       
-      printf("current system loadavg %.3lf %.3lf %.3lf\n", loadavg[0], loadavg[1], loadavg[2]);
+      // master begins to call RL for an action regarding the task
       auto policy = _rl.policy(task);
-      printf("Master decide to run task %zu with the policy: worker %ld, accelerator %d\n", task->ID, policy.first, policy.second);
+      //printf("Master decides to run task %zu with the policy:worker %ld, accelerator %d\n", 
+      //        task->ID, policy.first, policy.second);
       
+      // master gets the action recommendation and pushes the task to
+      // the corresponding worker's queue
       {
         std::unique_lock<std::mutex> lk(_mtxs[policy.first]);
-        //printf("get %zu's lock\n", policy.first);
         task->accelerator = policy.second;
-        _queues[policy.first].emplace(task);
+        _queues[policy.first].emplace_back(task);
       }
-      //printf("release %zu's lock\n", policy.first);
+  
+      // use _state_query to query the state information  
+      //_state_query();
       
       _cvs[policy.first].notify_one();
-
-      // after this action
     }
   });
 }
 
 
+// enqueue a task in master's queue
 template<typename T>
 inline void ThreadPool::enqueue(T&& task) {
+  // acquire the lock of master thread
+  // before push the task into master's queue
   {
     std::unique_lock<std::mutex> lk(_mtxs[_num_threads]);
-    _queues[_num_threads].emplace(std::forward<T>(task));
+    _queues[_num_threads].emplace_back(std::forward<T>(task));
   }
-  //printf("finish enqueue task\n");
   _cvs[_num_threads].notify_one();
 }
 
@@ -285,22 +298,77 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   printf("%s\n", oss.str().c_str());
 
   // TODO: add SYCL kernel based on the policy
+  // right now we use sleep to simulate the loading of a task
   std::this_thread::sleep_for(std::chrono::milliseconds(task->M * task->N));
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
-    //std::cout << "tid = " << tid << '\n';
     if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
       enqueue(_tgs->_tasks[tid].get());
     }  
   }
 
+  // finished processing all tasks
+  // stop the scheduler
   if (_processed.fetch_add(1) + 1 == _tgs->_V) {
     stop = true;
     for(auto& cv : _cvs) {
       cv.notify_one();
     }
+
+    // dump the timestamp 
+    // used for plotting histogram only
+    _tgs->_dump_timestamp();
   }
+}
+
+
+// query the state information
+inline void ThreadPool::_state_query() {
+  std::mutex io_mutex;
+  {
+    std::unique_lock<std::mutex> lk(io_mutex);
+    double loadavg[3];
+    getloadavg(loadavg, 3);
+    std::cout << "--------------------------\n"
+              << "Current system loadavg : " 
+              << loadavg[0] << ", "
+              << loadavg[1] << ", "
+              << loadavg[2] << '\n';
+   
+    // the followings are the information of worker's queue
+    // together with the info of a task in the queue   
+    for (size_t i = 0; i < _num_threads; ++i) {
+      {
+        std::unique_lock<std::mutex> lk(_mtxs[i]);
+        std::cout << "Thread " << i << " has " 
+                  << _queues[i].size() << " tasks in its queue\n";
+        size_t cnt = 0;
+        for (auto& t : _queues[i]) {
+          std::cout << "   Queue[" << cnt++ << "] : "
+                    << "Task ID " << t->ID
+                    << ", M " << t->M
+                    << ", N " << t->N
+                    << ", accelerator " << t->accelerator
+                    << '\n'; 
+        }
+      }
+    } 
+    std::cout << "--------------------------\n";
+  } 
+}
+
+// dump the timestamp
+// used for plotting histogram only
+inline void TGS::_dump_timestamp() const {
+  std::ofstream MyFile("../python_visualization/timestamp.csv");
+  for (size_t i = 1; i < _timestamp.size(); ++i) {
+    MyFile << std::chrono::duration_cast<std::chrono::nanoseconds>(
+      _timestamp[i]-_timestamp[i-1]).count()
+           << "\n";
+  }
+
+  MyFile.close();
 }
 
 
