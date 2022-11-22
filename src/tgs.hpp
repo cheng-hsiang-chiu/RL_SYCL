@@ -218,7 +218,7 @@ inline ThreadPool::~ThreadPool() {
 
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
-  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1), _rl(num_threads) { 
+  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1), _rl{num_threads} { 
    
   _num_threads = num_threads;
   _tgs = t;
@@ -284,13 +284,13 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       // could comment the line if not necessary
       _tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now();
 
-      // use _state_query to query the state information  
-      //_state_query();
-      
       // master begins to call RL for an action regarding the task
       auto policy = _rl.policy(task);
       //printf("Master decides to run task %zu with the policy:worker %ld, accelerator %d\n", 
       //        task->ID, policy.first, policy.second);
+      
+      // record the state and action pair
+      _state_query(*task, policy);
       
       // master gets the action recommendation and pushes the task to
       // the corresponding worker's queue
@@ -299,9 +299,6 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         task->accelerator = policy.second;
         _queues[policy.first].emplace_back(task);
       }
-
-      // record the state and action pair
-      _state_query(*task, policy);
 
       _cvs[policy.first].notify_one();
     }
