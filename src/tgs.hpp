@@ -14,6 +14,7 @@
 #include <sstream>
 #include <chrono>
 #include <fstream>
+#include <utility>
 
 //#include <CL/sycl.hpp>
 
@@ -23,6 +24,33 @@ namespace tgs {
 
 class RL_Policy;
 class TGS;
+
+
+struct States_Data {
+  // number of tasks
+  size_t ntasks;
+
+  // sum of task loads
+  size_t sum_task_loads;
+
+  // cpu load average
+  double loadavg[3];
+};
+
+struct Actions_Data {
+  // task id
+  size_t tid;
+
+  // worker id
+  size_t wid;
+
+  // accelerator id
+  size_t aid;
+
+  Actions_Data(const size_t t, const size_t w, const size_t a):
+    tid{t}, wid{w}, aid{a} {}
+};
+
 
 struct Task {
   size_t ID;
@@ -67,6 +95,8 @@ public:
   template<typename T>
   void enqueue(T&&);
 
+  void dump_state_action_pairs() const;
+
 private:
 
   std::atomic<size_t> _processed = 0;
@@ -88,7 +118,9 @@ private:
   template<typename T>
   void _process(size_t, T&&);
 
-  void _state_query() ;
+  void _state_query(const Task&, const std::pair<size_t, size_t>&); 
+
+  std::vector<std::pair<std::vector<States_Data>, Actions_Data>> _state_action_pairs;
 };
 
 // task graph scheduler class  
@@ -186,7 +218,7 @@ inline ThreadPool::~ThreadPool() {
 
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
-  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1), _rl{num_threads} { 
+  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1), _rl(num_threads) { 
    
   _num_threads = num_threads;
   _tgs = t;
@@ -267,10 +299,10 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         task->accelerator = policy.second;
         _queues[policy.first].emplace_back(task);
       }
-  
-      // use _state_query to query the state information  
-      //_state_query();
-      
+
+      // record the state and action pair
+      _state_query(*task, policy);
+
       _cvs[policy.first].notify_one();
     }
   });
@@ -319,43 +351,94 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     // dump the timestamp 
     // used for plotting histogram only
     _tgs->_dump_timestamp();
+
+    // dump state_action_pairs
+    dump_state_action_pairs();
   }
 }
 
 
 // query the state information
-inline void ThreadPool::_state_query() {
-  std::mutex io_mutex;
-  {
-    std::unique_lock<std::mutex> lk(io_mutex);
-    double loadavg[3];
-    getloadavg(loadavg, 3);
-    std::cout << "--------------------------\n"
-              << "Current system loadavg : " 
-              << loadavg[0] << ", "
-              << loadavg[1] << ", "
-              << loadavg[2] << '\n';
-   
-    // the followings are the information of worker's queue
-    // together with the info of a task in the queue   
-    for (size_t i = 0; i < _num_threads; ++i) {
-      {
-        std::unique_lock<std::mutex> lk(_mtxs[i]);
-        std::cout << "Thread " << i << " has " 
-                  << _queues[i].size() << " tasks in its queue\n";
-        size_t cnt = 0;
-        for (auto& t : _queues[i]) {
-          std::cout << "   Queue[" << cnt++ << "] : "
-                    << "Task ID " << t->ID
-                    << ", M " << t->M
-                    << ", N " << t->N
-                    << ", accelerator " << t->accelerator
-                    << '\n'; 
-        }
+//inline void ThreadPool::_state_query() {
+//  std::mutex io_mutex;
+//  {
+//    std::unique_lock<std::mutex> lk(io_mutex);
+//    double loadavg[3];
+//    getloadavg(loadavg, 3);
+//    std::cout << "--------------------------\n"
+//              << "Current system loadavg : " 
+//              << loadavg[0] << ", "
+//              << loadavg[1] << ", "
+//              << loadavg[2] << '\n';
+//   
+//    // the followings are the information of worker's queue
+//    // together with the info of a task in the queue   
+//    for (size_t i = 0; i < _num_threads; ++i) {
+//      {
+//        std::unique_lock<std::mutex> lk(_mtxs[i]);
+//        std::cout << "Thread " << i << " has " 
+//                  << _queues[i].size() << " tasks in its queue\n";
+//        size_t cnt = 0;
+//        for (auto& t : _queues[i]) {
+//          std::cout << "   Queue[" << cnt++ << "] : "
+//                    << "Task ID " << t->ID
+//                    << ", M " << t->M
+//                    << ", N " << t->N
+//                    << ", accelerator " << t->accelerator
+//                    << '\n'; 
+//        }
+//      }
+//    } 
+//    std::cout << "--------------------------\n";
+//  } 
+//}
+
+
+inline void ThreadPool::_state_query(
+  const Task& task, 
+  const std::pair<size_t, size_t>& policy) {
+      
+  // construct States_Data
+  std::vector<States_Data> tmp_states(_num_threads);
+  for (size_t i = 0; i < _num_threads; ++i) {
+    {
+      std::unique_lock<std::mutex> lk(_mtxs[i]);
+      tmp_states[i].ntasks = _queues[i].size();
+    
+      size_t sum = 0;
+      for (auto& t : _queues[i]) {
+        sum+=(t->M*t->N);
       }
-    } 
-    std::cout << "--------------------------\n";
-  } 
+      tmp_states[i].sum_task_loads = sum;
+      getloadavg(tmp_states[i].loadavg, 3);
+    }
+  }
+
+  _state_action_pairs.emplace_back(
+    std::make_pair(tmp_states,
+    Actions_Data{task.ID, policy.first, policy.second})
+  );
+}
+
+// dump the state_action_pairs
+inline void ThreadPool::dump_state_action_pairs() const {
+  std::ofstream MyFile("./state_action_pairs.txt");
+
+  for (size_t i = 0; i < _state_action_pairs.size(); ++i) {
+    MyFile << "State_Action_Pair[" << i << "]\n";
+    for (size_t j = 0; j < _state_action_pairs[i].first.size(); ++j) {
+      MyFile << "   State[" << j << "] : "
+             << _state_action_pairs[i].first[j].ntasks << ", "
+             << _state_action_pairs[i].first[j].sum_task_loads << ", ";
+      MyFile << "{" << _state_action_pairs[i].first[j].loadavg[0] << ", "
+             << _state_action_pairs[i].first[j].loadavg[1] << ", "
+             << _state_action_pairs[i].first[j].loadavg[2] << "}\n";
+    }
+    MyFile << "   Action : "
+           << _state_action_pairs[i].second.tid << ", "
+           << _state_action_pairs[i].second.wid << ", "
+           << _state_action_pairs[i].second.aid << "\n";
+  }
 }
 
 // dump the timestamp
