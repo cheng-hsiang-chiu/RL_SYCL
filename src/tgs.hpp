@@ -470,7 +470,7 @@ inline void ThreadPool::dump_state_action_tuples() const {
     }
 
     MyFile << "   State[" 
-           << std::get<0>(_state_action_tuples[i]).size()+1 << "] : ";
+           << std::get<0>(_state_action_tuples[i]).size() << "] : ";
     MyFile << std::get<1>(_state_action_tuples[i]).first << ", {";
 
     auto& pwid_ref = std::get<1>(_state_action_tuples[i]).second;
