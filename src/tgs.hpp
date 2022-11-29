@@ -15,6 +15,7 @@
 #include <chrono>
 #include <fstream>
 #include <utility>
+#include <tuple>
 
 //#include <CL/sycl.hpp>
 
@@ -29,6 +30,9 @@ class TGS;
 struct States_Data {
   // number of tasks
   size_t ntasks;
+
+  // task id in a worker's queue
+  std::vector<size_t> tasks_id; 
 
   // sum of task loads
   size_t sum_task_loads;
@@ -52,6 +56,7 @@ struct Actions_Data {
 };
 
 
+
 struct Task {
   size_t ID;
 
@@ -69,6 +74,12 @@ struct Task {
 
   // Task executed on accelerator 
   Accelerator accelerator;
+
+  // woker id the task is executed on
+  size_t worker_id;
+
+  // parent id of the task
+  std::vector<size_t> parent_id;
 
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n} {} 
@@ -95,7 +106,7 @@ public:
   template<typename T>
   void enqueue(T&&);
 
-  void dump_state_action_pairs() const;
+  void dump_state_action_tuples() const;
 
 private:
 
@@ -120,7 +131,9 @@ private:
 
   void _state_query(const Task&, const std::pair<size_t, size_t>&); 
 
-  std::vector<std::pair<std::vector<States_Data>, Actions_Data>> _state_action_pairs;
+  std::vector<std::tuple<std::vector<States_Data>, 
+               std::pair<size_t, std::vector<size_t>>, 
+               Actions_Data>> _state_action_tuples;
 };
 
 // task graph scheduler class  
@@ -179,6 +192,8 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
     _graph[from].push_back(to);
 
     _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
+    
+    _tasks[to]->parent_id.push_back(from);
   }
 }
 
@@ -288,7 +303,8 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       auto policy = _rl.policy(task);
       //printf("Master decides to run task %zu with the policy:worker %ld, accelerator %d\n", 
       //        task->ID, policy.first, policy.second);
-      
+     
+      task->worker_id = policy.first; 
       // record the state and action pair
       _state_query(*task, policy);
       
@@ -349,8 +365,8 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     // used for plotting histogram only
     _tgs->_dump_timestamp();
 
-    // dump state_action_pairs
-    dump_state_action_pairs();
+    // dump state_action_tuples
+    dump_state_action_tuples();
   }
 }
 
@@ -401,7 +417,10 @@ inline void ThreadPool::_state_query(
     {
       std::unique_lock<std::mutex> lk(_mtxs[i]);
       tmp_states[i].ntasks = _queues[i].size();
-    
+      for (auto& t : _queues[i]) {
+        (tmp_states[i].tasks_id).push_back(t->ID);
+      }
+
       size_t sum = 0;
       for (auto& t : _queues[i]) {
         sum+=(t->M*t->N);
@@ -410,31 +429,64 @@ inline void ThreadPool::_state_query(
       getloadavg(tmp_states[i].loadavg, 3);
     }
   }
+  
+  // tmp1 stores the woker id of tasks's parents
+  std::vector<size_t> tmp1;
+  for (auto& pid : task.parent_id) {
+    tmp1.push_back(_tgs->_tasks[pid]->worker_id);
+  }
 
-  _state_action_pairs.emplace_back(
-    std::make_pair(tmp_states,
+  std::pair<size_t, std::vector<size_t>> state_current_task = 
+    std::make_pair(task.ID, std::move(tmp1));
+
+  _state_action_tuples.emplace_back(
+    std::make_tuple(tmp_states, state_current_task,
     Actions_Data{task.ID, policy.first, policy.second})
   );
 }
 
-// dump the state_action_pairs
-inline void ThreadPool::dump_state_action_pairs() const {
-  std::ofstream MyFile("./state_action_pairs.txt");
+// dump the state_action_tuples
+inline void ThreadPool::dump_state_action_tuples() const {
+  std::ofstream MyFile("./state_action_tuples.txt");
 
-  for (size_t i = 0; i < _state_action_pairs.size(); ++i) {
-    MyFile << "State_Action_Pair[" << i << "]\n";
-    for (size_t j = 0; j < _state_action_pairs[i].first.size(); ++j) {
-      MyFile << "   State[" << j << "] : "
-             << _state_action_pairs[i].first[j].ntasks << ", "
-             << _state_action_pairs[i].first[j].sum_task_loads << ", ";
-      MyFile << "{" << _state_action_pairs[i].first[j].loadavg[0] << ", "
-             << _state_action_pairs[i].first[j].loadavg[1] << ", "
-             << _state_action_pairs[i].first[j].loadavg[2] << "}\n";
+  for (size_t i = 0; i < _state_action_tuples.size(); ++i) {
+    MyFile << "State_Action_Tuple[" << i << "]\n";
+    for (size_t j = 0; j < std::get<0>(_state_action_tuples[i]).size(); ++j) {
+      MyFile << "   State[" << j << "] : {";
+      auto& tasks_id_ref = std::get<0>(_state_action_tuples[i])[j].tasks_id;
+      for (size_t k = 0; k < tasks_id_ref.size(); ++k) {
+        if (k == tasks_id_ref.size()-1) {
+          MyFile << tasks_id_ref[k];
+        }
+        else {
+          MyFile << tasks_id_ref[k] << ','; 
+        }
+      }
+      MyFile << "}, "
+             << std::get<0>(_state_action_tuples[i])[j].sum_task_loads << ", ";
+      MyFile << "{" << std::get<0>(_state_action_tuples[i])[j].loadavg[0] << ", "
+             << std::get<0>(_state_action_tuples[i])[j].loadavg[1] << ", "
+             << std::get<0>(_state_action_tuples[i])[j].loadavg[2] << "}\n";
     }
+
+    MyFile << "   State[" 
+           << std::get<0>(_state_action_tuples[i]).size()+1 << "] : ";
+    MyFile << std::get<1>(_state_action_tuples[i]).first << ", {";
+
+    auto& pwid_ref = std::get<1>(_state_action_tuples[i]).second;
+    for (size_t k = 0; k < pwid_ref.size(); ++k) {
+      if (k == pwid_ref.size()-1) { 
+        MyFile << pwid_ref[k];
+      }
+      else {
+        MyFile << pwid_ref[k] << ',';
+      }
+    }
+    MyFile << "}\n";
     MyFile << "   Action : "
-           << _state_action_pairs[i].second.tid << ", "
-           << _state_action_pairs[i].second.wid << ", "
-           << _state_action_pairs[i].second.aid << "\n";
+           << std::get<2>(_state_action_tuples[i]).tid << ", "
+           << std::get<2>(_state_action_tuples[i]).wid << ", "
+           << std::get<2>(_state_action_tuples[i]).aid << "\n";
   }
 }
 
