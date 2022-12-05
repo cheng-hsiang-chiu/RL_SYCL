@@ -344,7 +344,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
   // TODO: add SYCL kernel based on the policy
   // right now we use sleep to simulate the loading of a task
-  std::this_thread::sleep_for(std::chrono::milliseconds(task->M * task->N));
+  std::this_thread::sleep_for(std::chrono::microseconds(task->M * task->N * task->N));
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
@@ -423,7 +423,7 @@ inline void ThreadPool::_state_query(
 
       size_t sum = 0;
       for (auto& t : _queues[i]) {
-        sum+=(t->M*t->N);
+        sum+=(t->M*t->N*t->N);
       }
       tmp_states[i].sum_task_loads = sum;
       getloadavg(tmp_states[i].loadavg, 3);
@@ -450,43 +450,51 @@ inline void ThreadPool::dump_state_action_tuples() const {
   std::ofstream MyFile("./state_action_tuples.txt");
 
   for (size_t i = 0; i < _state_action_tuples.size(); ++i) {
-    MyFile << "State_Action_Tuple[" << i << "]\n";
+    //MyFile << "State_Action_Tuple[" << i << "]\n";
     for (size_t j = 0; j < std::get<0>(_state_action_tuples[i]).size(); ++j) {
-      MyFile << "   State[" << j << "] : {";
-      auto& tasks_id_ref = std::get<0>(_state_action_tuples[i])[j].tasks_id;
-      for (size_t k = 0; k < tasks_id_ref.size(); ++k) {
-        if (k == tasks_id_ref.size()-1) {
-          MyFile << tasks_id_ref[k];
+      //MyFile << "   State[" << j << "] : {";
+      //auto& tasks_id_ref = std::get<0>(_state_action_tuples[i])[j].tasks_id;
+      //for (size_t k = 0; k < tasks_id_ref.size(); ++k) {
+      //  if (k == tasks_id_ref.size()-1) {
+      //    MyFile << tasks_id_ref[k];
+      //  }
+      //  else {
+      //    MyFile << tasks_id_ref[k] << ','; 
+      //  }
+      //}
+      //MyFile << "}, "
+      MyFile << std::get<0>(_state_action_tuples[i])[j].sum_task_loads << " ";
+      //MyFile << "{" << std::get<0>(_state_action_tuples[i])[j].loadavg[0] << ", "
+      //       << std::get<0>(_state_action_tuples[i])[j].loadavg[1] << ", "
+      //       << std::get<0>(_state_action_tuples[i])[j].loadavg[2] << "}\n";
+
+      size_t sum_loading_pid = 0;
+      for (auto& pid : _tgs->_tasks[std::get<2>(_state_action_tuples[i]).tid]->parent_id) {
+        if (_tgs->_tasks[pid]->worker_id == j) {
+          sum_loading_pid += (_tgs->_tasks[pid]->M*_tgs->_tasks[pid]->N*_tgs->_tasks[pid]->N);   
         }
-        else {
-          MyFile << tasks_id_ref[k] << ','; 
-        }
-      }
-      MyFile << "}, "
-             << std::get<0>(_state_action_tuples[i])[j].sum_task_loads << ", ";
-      MyFile << "{" << std::get<0>(_state_action_tuples[i])[j].loadavg[0] << ", "
-             << std::get<0>(_state_action_tuples[i])[j].loadavg[1] << ", "
-             << std::get<0>(_state_action_tuples[i])[j].loadavg[2] << "}\n";
+      } 
+      MyFile << sum_loading_pid << ' ';   
     }
 
-    MyFile << "   State[" 
-           << std::get<0>(_state_action_tuples[i]).size() << "] : ";
-    MyFile << std::get<1>(_state_action_tuples[i]).first << ", {";
+    //MyFile << "   State[" 
+    //       << std::get<0>(_state_action_tuples[i]).size() << "] : ";
+    //MyFile << std::get<1>(_state_action_tuples[i]).first << ", {";
 
-    auto& pwid_ref = std::get<1>(_state_action_tuples[i]).second;
-    for (size_t k = 0; k < pwid_ref.size(); ++k) {
-      if (k == pwid_ref.size()-1) { 
-        MyFile << pwid_ref[k];
-      }
-      else {
-        MyFile << pwid_ref[k] << ',';
-      }
-    }
-    MyFile << "}\n";
-    MyFile << "   Action : "
-           << std::get<2>(_state_action_tuples[i]).tid << ", "
-           << std::get<2>(_state_action_tuples[i]).wid << ", "
-           << std::get<2>(_state_action_tuples[i]).aid << "\n";
+    //auto& pwid_ref = std::get<1>(_state_action_tuples[i]).second;
+    //for (size_t k = 0; k < pwid_ref.size(); ++k) {
+    //  if (k == pwid_ref.size()-1) { 
+    //    MyFile << pwid_ref[k];
+    //  }
+    //  else {
+    //    MyFile << pwid_ref[k] << ',';
+    //  }
+    //}
+    //MyFile << "}\n";
+    //MyFile << "   Action : "
+    MyFile << std::get<2>(_state_action_tuples[i]).tid << " "
+           << std::get<2>(_state_action_tuples[i]).wid << "\n";
+           //<< std::get<2>(_state_action_tuples[i]).aid << "\n";
   }
 }
 
