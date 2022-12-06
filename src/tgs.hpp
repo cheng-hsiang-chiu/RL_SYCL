@@ -206,8 +206,8 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   for (size_t i = 0; i < _num_threads; ++i) {
 
     // every worker has its own sycl queue  
-    _sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector{}});
-    _sycl_cpu_queues.emplace_back(sycl::queue{sycl::host_selector{}});
+    _sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector_v});
+    _sycl_cpu_queues.emplace_back(sycl::queue{sycl::cpu_selector_v});
 
     _workers.emplace_back([&, id=i]() {
       Task* task(nullptr);
@@ -319,9 +319,18 @@ inline void ThreadPool::_process(size_t id, T&& task) {
       q = _sycl_gpu_queues[id];
     }
   } catch (sycl::exception const& e) {
-    oss << "Cannot select a GPU : "
-        << e.what() << '\n'
-        << "Using a CPU device\n";
+    if (task->accelerator == Accelerator::CPU) {
+      oss << "Cannot select a CPU : "
+          << e.what() << '\n'
+          << "Using a GPU device\n";
+      q = _sycl_gpu_queues[id];
+    }
+    else {
+      oss << "Cannot select a GPU : "
+          << e.what() << '\n'
+          << "Using a CPU device\n";
+      q = _sycl_cpu_queues[id];
+    }
     printf("%s", oss.str().c_str());
     oss.str("");
   }

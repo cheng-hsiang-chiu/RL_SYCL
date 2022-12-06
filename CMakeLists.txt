@@ -9,7 +9,7 @@ MESSAGE(STATUS "PROJECT_SOURCE_DIR: " ${PROJECT_SOURCE_DIR})
 MESSAGE(STATUS "CMAKE_CURRENT_SOURCE_DIR: " ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(CMAKE_CXX_COMPILER "clang++")
-set(CMAKE_CXX_FLAGS "-std=c++17 -O2 -pthread -fsycl -fsycl-unnamed-lambda -fsycl-targets=nvptx64-nvidia-cuda-sycldevice -v")
+set(CMAKE_CXX_FLAGS "-std=c++17 -O2 -pthread -fsycl -fsycl-unnamed-lambda -fsycl-targets=spir64_x86_64,nvptx64-nvidia-cuda -v")
 set(FM_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
 
 add_library(error_settings INTERFACE)
