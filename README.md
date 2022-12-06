@@ -56,5 +56,5 @@ make
 To run the executable, please follow the instruction below.
 ```
 cd build
-./main < ../inputs/1.in
+./main < ../inputs/7.in
 ```
