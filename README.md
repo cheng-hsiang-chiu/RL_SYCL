@@ -27,11 +27,14 @@ Then the edge (0, 2) denotes that vertex 0 connecting to vertex 2.
 1 2
 2 3 
 ```
+The following figure shows the above task graph.
+![](figure/demo_task_graph.png)
 
 
 ## SYCL Compiler Installed
 Before building the executable, please make sure SYCL compiler is successfully installed.
-The link of the installation instructions is https://intel.github.io/llvm-docs/GetStartedGuide.html 
+The link of the installation instructions is 
+https://github.com/intel/llvm/blob/sycl/sycl/doc/GetStartedGuide.md
 
 
 ## Environment Setup
