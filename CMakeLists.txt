@@ -16,7 +16,13 @@ add_library(error_settings INTERFACE)
 
 add_executable(main ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(main /usr/local/cuda-11.2/lib64/libcudart.so)
+target_link_libraries(main ${CMAKE_CURRENT_SOURCE_DIR}/lib/libgpuinfo.a)
+
+target_include_directories(main PUBLIC 
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "/usr/local/cuda-11.2/include"
+)
 
 include(CTest)
 

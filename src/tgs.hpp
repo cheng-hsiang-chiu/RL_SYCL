@@ -16,11 +16,34 @@
 #include <CL/sycl.hpp>
 
 #include "policy.hpp"
+#include "gpu_info.hpp"
 
 namespace tgs {
 
 class RL_Policy;
 class TGS;
+
+enum Weights {                                                                                                                                
+  Default = -1,
+  CPUtoCPU = 0,
+  CPUtoGPU = 1,
+  GPUtoCPU = 2,
+  GPUtoGPU = 3
+};
+
+
+struct Edge {
+  // ID of the "From" task
+  size_t From_task_id;
+
+  // ID of the "To" task
+  size_t To_task_id;
+
+  // weight of the edge, initialize to Default(-1)
+  Weights weight = Weights::Default;
+};
+
+
 
 struct Task {
   size_t ID;
@@ -42,6 +65,9 @@ struct Task {
 
   // ID of the worker that processes the task 
   int worker_id = -1;
+
+  // ID of the parent task
+  int parent_id = -1; 
 
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n} {} 
@@ -122,6 +148,8 @@ private:
   size_t _MM = 0;
 
   std::vector<std::unique_ptr<Task>> _tasks;
+
+  std::vector<std::unique_ptr<Edge>> _edges;
   
   std::vector<std::vector<size_t>> _graph;
  
@@ -138,6 +166,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
   _graph.resize(_V);
   _tasks.resize(_V);
+  _edges.resize(_E);
 
   // parse the meta data of every task
   for (size_t i = 0; i < _V; ++i) {
@@ -157,6 +186,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
     _graph[from].push_back(to);
     _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
+    _tasks[to]->parent_id = from;
   }
 }
 
@@ -271,7 +301,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         task->worker_id = policy.first;
         _queues[policy.first].emplace(task);
       }
-      
+      printf("GPU Memory Usage : %ld\n", getGPUMemUsage(0)); 
       _cvs[policy.first].notify_one();
 
       // after this action
