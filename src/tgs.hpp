@@ -12,6 +12,7 @@
 #include <queue>
 #include <string>
 #include <sstream>
+#include <future>
 
 #include <CL/sycl.hpp>
 
@@ -24,24 +25,24 @@ class RL_Policy;
 class TGS;
 
 enum Weights {                                                                                                                                
-  Default = -1,
+  Default  = -1,
   CPUtoCPU = 0,
-  CPUtoGPU = 1,
-  GPUtoCPU = 2,
-  GPUtoGPU = 3
+  GPUtoGPU = 0,
+  CPUtoGPU = 2,
+  GPUtoCPU = 2
 };
-
-
-struct Edge {
-  // ID of the "From" task
-  size_t From_task_id;
-
-  // ID of the "To" task
-  size_t To_task_id;
-
-  // weight of the edge, initialize to Default(-1)
-  Weights weight = Weights::Default;
-};
+//
+//
+//struct Edge {
+//  // ID of the "From" task
+//  size_t From_task_id;
+//
+//  // ID of the "To" task
+//  size_t To_task_id;
+//
+//  // weight of the edge, initialize to Default(-1)
+//  Weights weight = Weights::Default;
+//};
 
 
 
@@ -66,11 +67,14 @@ struct Task {
   // ID of the worker that processes the task 
   int worker_id = -1;
 
-  // ID of the parent task
-  int parent_id = -1; 
+  // IDs of the parent task
+  std::vector<Task*> parents;
+
+  // matrix 
+  std::vector<int> Matrix;;
 
   Task(const size_t id, const size_t m, const size_t n) :
-    ID{id}, M{m}, N{n} {} 
+    ID{id}, M{m}, N{n}, Matrix(m*m) {} 
 };
 
 class ThreadPool {
@@ -92,11 +96,7 @@ public:
   template<typename T>
   void enqueue(T&&);
 
-  void set_MM(const size_t);
-
 private:
-
-  size_t _MM = 0;
 
   bool _stop = false;
 
@@ -136,20 +136,24 @@ public:
   TGS(const size_t);
 
   void dump(std::ostream&) const;
+  
+  void dump_scheduling(std::ostream&);
 
   void schedule();
 
 private:
+
+  std::vector<std::future<void>> _future;
+  
+  std::vector<std::promise<void>> _promise;
+
   size_t _V;
 
   size_t _E;
 
-  // maximum row of matrix
-  size_t _MM = 0;
-
   std::vector<std::unique_ptr<Task>> _tasks;
 
-  std::vector<std::unique_ptr<Edge>> _edges;
+  //std::vector<std::unique_ptr<Edge>> _edges;
   
   std::vector<std::vector<size_t>> _graph;
  
@@ -159,14 +163,16 @@ private:
 
 
 // TGS construtor
-inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
+inline TGS::TGS(const size_t num_threads) : 
+  _promise(num_threads+1), _tpool(num_threads, this) {
+  
   std::cout << num_threads << " concurrent threads are supported.\n";
 
   std::cin >> _V >> _E;
 
   _graph.resize(_V);
   _tasks.resize(_V);
-  _edges.resize(_E);
+  //_edges.resize(_E);
 
   // parse the meta data of every task
   for (size_t i = 0; i < _V; ++i) {
@@ -174,10 +180,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
     std::cin >> id >> m >> n;
     
     _tasks[id] = std::make_unique<Task>(id, m, n);
-    
-    _MM = _MM > m ? _MM : m;
   }
-  _tpool.set_MM(_MM);
   
   // parse the edges
   for (size_t i = 0; i < _E; ++i) {
@@ -186,7 +189,7 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
     _graph[from].push_back(to);
     _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
-    _tasks[to]->parent_id = from;
+    _tasks[to]->parents.push_back(_tasks[from].get());
   }
 }
 
@@ -217,6 +220,66 @@ inline void TGS::dump(std::ostream& os) const {
   }
 }
 
+inline void TGS::dump_scheduling(std::ostream& os) {
+  // wait here until all workers are done
+  for (auto& fu : _future) {
+    fu.get();
+  }
+
+  os << _V << '\n'; 
+  for (auto& task : _tasks) {
+    os << task->ID        << ' '
+       << task->worker_id << ' '	
+       << task->accelerator << '\n';
+  }
+
+  for (auto& task : _tasks) {  
+    for (auto& p : task->parents) {
+      switch (p->accelerator)
+      {
+        case Accelerator::GPU:
+          switch (task->accelerator)
+          {
+            case Accelerator::GPU:
+              // from gpu to gpu
+              os << p->ID    << ' ' 
+                 << task->ID << ' '
+                 << "0\n";
+            break;
+
+            case Accelerator::CPU:
+              // from gpu to cpu
+              os << p->ID    << ' ' 
+                 << task->ID << ' '
+                 << "2\n";
+            break;
+          }
+        break;
+
+        case Accelerator::CPU:		
+          switch (task->accelerator)
+          {
+            case Accelerator::GPU:
+              // from cput to gpu
+              os << p->ID    << ' ' 
+                 << task->ID << ' '
+                 << "2\n";
+            break;
+
+	    case Accelerator::CPU:
+	      // from cpu to cpu 
+              os << p->ID    << ' ' 
+                 << task->ID << ' '
+                 << "0\n";
+            break;
+          }
+        break;
+      }
+    }
+  }
+}
+
+
 // destructor
 inline ThreadPool::~ThreadPool() {
   for (auto& w : _workers) {
@@ -228,18 +291,19 @@ inline ThreadPool::~ThreadPool() {
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1),
-  _results(num_threads), _rl{num_threads} { 
+  _rl{num_threads} { 
    
   _num_threads = num_threads;
   _tgs = t;
  
   for (size_t i = 0; i < _num_threads; ++i) {
+    _tgs->_future.emplace_back(_tgs->_promise[i].get_future());
 
     // every worker has its own sycl queue  
     _sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector_v});
     _sycl_cpu_queues.emplace_back(sycl::queue{sycl::cpu_selector_v});
 
-    _workers.emplace_back([&, id=i]() {
+    _workers.emplace_back([&, id=i, &p=_tgs->_promise]() {
       Task* task(nullptr);
       // TODO think about the bug
       //size_t id = i;
@@ -251,6 +315,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
           });
         
           if(_stop) {
+            p[id].set_value();   
             return;
           }
           
@@ -266,7 +331,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   }
 
   // master thread does the scheduling
-  _workers.emplace_back([&](){
+  _workers.emplace_back([&, &p=_tgs->_promise](){
     Task* task(nullptr);
      
     while(1) {
@@ -277,6 +342,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         }); 
 
         if(_stop) {
+          p[p.size()-1].set_value();
           return;
         }
         
@@ -320,17 +386,6 @@ inline void ThreadPool::enqueue(T&& task) {
 }
 
 
-// set the maximum row of a matrix
-inline void ThreadPool::set_MM(const size_t mm) {
-  _MM = mm;
-  
-  for (size_t i = 0; i < _num_threads; ++i) {  
-    // resize and initialize every result 
-    _results[i].resize(_MM * _MM, 0);
-  }
-}
-
-
 template<typename T>
 inline void ThreadPool::_process(size_t id, T&& task) {
 
@@ -364,7 +419,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     printf("%s", oss.str().c_str());
     oss.str("");
   }
-
+  
   oss << "Worker "        << id 
       << " submits task " << task->ID 
       << " to " 
@@ -372,13 +427,17 @@ inline void ThreadPool::_process(size_t id, T&& task) {
       << std::endl;
   printf("%s", oss.str().c_str());
   oss.str("");
-
-  int sum = 0;
-  for (auto& r : _results[id]) {
-    sum += r;
-  }
   
-  //oss << "sum = " << sum << std::endl;
+  int parent_sum = 0;
+  // sum up all parents' sum
+  for (auto& p : task->parents) {
+    //printf("Task %ld has parents : %ld\n", task->ID, p->ID);
+    for (auto& m : p->Matrix) {
+      parent_sum += m;
+    }
+  }
+  //printf("\n"); 
+  //oss << "parent_sum = " << parent_sum << std::endl;
   //printf("%s", oss.str().c_str());
   //oss.str("");
 
@@ -396,7 +455,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   q.parallel_for(
     sycl::range<1>(M*N),
     [=](sycl::id<1> i) {
-      da[i] = sum - id;
+      da[i] = parent_sum - id;
     }
   );
 
@@ -404,7 +463,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   q.parallel_for(
     sycl::range<1>(N*M),
     [=](sycl::id<1> i) {
-      db[i] = sum + id;
+      db[i] = parent_sum + id;
     }
   ).wait();
 
@@ -430,10 +489,15 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   ).wait();
 
 
-  // copy result back to worker's local memory
+  // save result back to task's local Matrix
   for (size_t i = 0; i < M*M; i++) {
-    _results[id][i%(_MM*_MM)] = *(dc+i);
+    task->Matrix[i] = *(dc+i);
   }
+  
+  sycl::free(da, q);
+  sycl::free(db, q);
+  sycl::free(dc, q);
+
 
 
   // decrement the dependencies
