@@ -423,36 +423,41 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   // TODO: add SYCL kernel based on the policy
 
   // offload to gpu or cpu
-  sycl::queue q;
+  //sycl::queue q;
 
   try {
     if (task->accelerator == Accelerator::CPU) {
-      q = _sycl_cpu_queues[id];
+      //q = _sycl_cpu_queues[id];
+      task->sycl_queue = _sycl_cpu_queues[id];
     }
     else {
-      q = _sycl_gpu_queues[id];
+      //q = _sycl_gpu_queues[id];
+      task->sycl_queue = _sycl_gpu_queues[id];
     }
   } catch (sycl::exception const& e) {
     if (task->accelerator == Accelerator::CPU) {
       oss << "Cannot select a CPU : "
           << e.what() << '\n'
           << "Using a GPU device\n";
-      q = _sycl_gpu_queues[id];
+      //q = _sycl_gpu_queues[id];
+      task->sycl_queue = _sycl_gpu_queues[id];
     }
     else {
       oss << "Cannot select a GPU : "
           << e.what() << '\n'
           << "Using a CPU device\n";
-      q = _sycl_cpu_queues[id];
+      //q = _sycl_cpu_queues[id];
+      task->sycl_queue = _sycl_cpu_queues[id];
     }
     printf("%s", oss.str().c_str());
     oss.str("");
   }
-  task->sycl_queue = q; 
+  //task->sycl_queue = q; 
   oss << "Worker "        << id 
       << " submits task " << task->ID 
       << " to " 
-      << q.get_device().get_info<sycl::info::device::name>()
+      //<< q.get_device().get_info<sycl::info::device::name>()
+      << (task->sycl_queue).get_device().template get_info<sycl::info::device::name>()
       << std::endl;
   printf("%s", oss.str().c_str());
   oss.str("");
@@ -482,14 +487,18 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   // declare three USM pointers to three matrixes
   // da points to matrix a, db to matrix b, dc to matrix c
 
-  int* da = sycl::malloc_shared<int>(M*N, q);
-  int* db = sycl::malloc_shared<int>(N*M, q);
+  //int* da = sycl::malloc_shared<int>(M*N, q);
+  //int* db = sycl::malloc_shared<int>(N*M, q);
+  int* da = sycl::malloc_shared<int>(M*N, task->sycl_queue);
+  int* db = sycl::malloc_shared<int>(N*M, task->sycl_queue);
   //int* dc = sycl::malloc_shared<int>(M*M, q);
-  task->ptr_matrix = sycl::malloc_shared<int>(M*M, q);
+  //task->ptr_matrix = sycl::malloc_shared<int>(M*M, q);
+  task->ptr_matrix = sycl::malloc_shared<int>(M*M, task->sycl_queue);
   int* dc = task->ptr_matrix;
 
   // initialize matrix a
-  q.parallel_for(
+  //q.parallel_for(
+  (task->sycl_queue).parallel_for(
     sycl::range<1>(M*N),
     [=](sycl::id<1> i) {
       da[i] = parent_sum - id;
@@ -497,17 +506,19 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   );
 
   // initialize matrix b
-  q.parallel_for(
+  //q.parallel_for(
+  (task->sycl_queue).parallel_for(
     sycl::range<1>(N*M),
     [=](sycl::id<1> i) {
       db[i] = parent_sum + id;
     }
-  );
+  ).wait();
 
   auto _M = (M % 16 == 0) ? M : (M + 16 - M % 16);
 
   // matrix multiplication c = a * b
-  q.parallel_for(
+  //q.parallel_for(
+  task->sycl_queue.parallel_for(
     sycl::nd_range<2>{sycl::range<2>(_M, _M), sycl::range<2>(16, 16)},
     [=](sycl::nd_item<2> item) {
     
@@ -524,7 +535,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
         dc[row * M + col] = sum;
       }
     }
-  );
+  ).wait();
 
 
   // save result back to task's local Matrix
@@ -532,8 +543,10 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   //  task->Matrix[i] = *(dc+i);
   //}
   
-  sycl::free(da, q);
-  sycl::free(db, q);
+  sycl::free(da, task->sycl_queue);
+  sycl::free(db, task->sycl_queue);
+  //sycl::free(da, q);
+  //sycl::free(db, q);
   //sycl::free(dc, q);
 
 
