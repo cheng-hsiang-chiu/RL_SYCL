@@ -73,6 +73,10 @@ struct Task {
   // matrix 
   std::vector<int> Matrix;;
 
+  int* ptr_matrix;
+  
+  sycl::queue sycl_queue;
+
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n}, Matrix(m*m) {} 
 };
@@ -141,6 +145,8 @@ public:
 
   void schedule();
 
+  ~TGS();  
+
 private:
 
   std::vector<std::future<void>> _future;
@@ -194,6 +200,21 @@ inline TGS::TGS(const size_t num_threads) :
 }
 
 
+inline TGS::~TGS() {
+  for (auto& t : _tasks) {
+    sycl::free(t->ptr_matrix, t->sycl_queue);
+    //if (t->accelerator == Accelerator::GPU) {
+    //  sycl::queue q{sycl::gpu_selector_v};
+    //  sycl::free(t->ptr_matrix, q);
+    //}
+    //else {
+    //  sycl::queue q{sycl::cpu_selector_v};
+    //  sycl::free(t->ptr_matrix, q);
+    //}
+  }
+}
+
+
 inline void TGS::schedule() {
 
   std::vector<Task*> source;
@@ -220,13 +241,21 @@ inline void TGS::dump(std::ostream& os) const {
   }
 }
 
+
+/*
+ * dump schedulng results
+ * The first line is the number of tasks (_V)
+ * The following _V lines are the scheudling results of each task
+ * The following _E lines are the weights of each edge
+ */
 inline void TGS::dump_scheduling(std::ostream& os) {
   // wait here until all workers are done
   for (auto& fu : _future) {
     fu.get();
   }
-
+  
   os << _V << '\n'; 
+
   for (auto& task : _tasks) {
     os << task->ID        << ' '
        << task->worker_id << ' '	
@@ -419,7 +448,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     printf("%s", oss.str().c_str());
     oss.str("");
   }
-  
+  task->sycl_queue = q; 
   oss << "Worker "        << id 
       << " submits task " << task->ID 
       << " to " 
@@ -430,10 +459,16 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   
   int parent_sum = 0;
   // sum up all parents' sum
+  //for (auto& p : task->parents) {
+  //  //printf("Task %ld has parents : %ld\n", task->ID, p->ID);
+  //  for (auto& m : p->Matrix) {
+  //    parent_sum += m;
+  //  }
+  //}
+  
   for (auto& p : task->parents) {
-    //printf("Task %ld has parents : %ld\n", task->ID, p->ID);
-    for (auto& m : p->Matrix) {
-      parent_sum += m;
+    for (int i = 0; i < p->M * p->M; ++i) {
+      parent_sum += p->ptr_matrix[i];
     }
   }
   //printf("\n"); 
@@ -449,7 +484,9 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
   int* da = sycl::malloc_shared<int>(M*N, q);
   int* db = sycl::malloc_shared<int>(N*M, q);
-  int* dc = sycl::malloc_shared<int>(M*M, q);
+  //int* dc = sycl::malloc_shared<int>(M*M, q);
+  task->ptr_matrix = sycl::malloc_shared<int>(M*M, q);
+  int* dc = task->ptr_matrix;
 
   // initialize matrix a
   q.parallel_for(
@@ -465,7 +502,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     [=](sycl::id<1> i) {
       db[i] = parent_sum + id;
     }
-  ).wait();
+  );
 
   auto _M = (M % 16 == 0) ? M : (M + 16 - M % 16);
 
@@ -483,20 +520,21 @@ inline void ThreadPool::_process(size_t id, T&& task) {
         for(int n = 0; n < N; n++) {
             sum += da[row * N + n] * db[n * M + col];
         }
+        //task->ptr_matrix[row * M + col] = sum;
         dc[row * M + col] = sum;
       }
     }
-  ).wait();
+  );
 
 
   // save result back to task's local Matrix
-  for (size_t i = 0; i < M*M; i++) {
-    task->Matrix[i] = *(dc+i);
-  }
+  //for (size_t i = 0; i < M*M; i++) {
+  //  task->Matrix[i] = *(dc+i);
+  //}
   
   sycl::free(da, q);
   sycl::free(db, q);
-  sycl::free(dc, q);
+  //sycl::free(dc, q);
 
 
 
