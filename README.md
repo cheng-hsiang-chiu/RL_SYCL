@@ -5,7 +5,7 @@
 - inputs : input files
 - src : source code
 - env.sh : script to export environment variables
-
+- lib : library
 
 ## Input Format
 The input files have the following format.
