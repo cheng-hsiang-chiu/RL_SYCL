@@ -6,7 +6,9 @@ int main() {
 
   //tgs::TGS scheduler(std::thread::hardware_concurrency());
   
-  tgs::TGS scheduler(4);
+  // 4 is the number of worker threads
+  // 16 is the number of thread for a CPU task
+  tgs::TGS scheduler(4, 16);
 
   //scheduler.dump(std::cout);
 

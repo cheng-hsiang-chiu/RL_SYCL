@@ -13,6 +13,7 @@
 #include <string>
 #include <sstream>
 #include <future>
+//#include <omp.h>
 
 #include <CL/sycl.hpp>
 
@@ -58,6 +59,9 @@ struct Task {
   // atomic join_counter
   std::atomic<int> join_counter = 0;
 
+  // atomic number of child
+  std::atomic<int> num_child = 0; 
+
   // if scheduled
   bool scheduled = false;
 
@@ -70,15 +74,14 @@ struct Task {
   // IDs of the parent task
   std::vector<Task*> parents;
 
-  // matrix 
-  std::vector<int> Matrix;;
+  // pointer to a dynamically allocated matrix
+  int* ptr_matrix = nullptr;
 
-  int* ptr_matrix;
-  
+  // sycl queue 
   sycl::queue sycl_queue;
 
   Task(const size_t id, const size_t m, const size_t n) :
-    ID{id}, M{m}, N{n}, Matrix(m*m) {} 
+    ID{id}, M{m}, N{n} {} 
 };
 
 class ThreadPool {
@@ -93,7 +96,7 @@ public:
   
   ThreadPool &operator=(ThreadPool &&) = delete;
   
-  ThreadPool(const size_t, TGS*);
+  ThreadPool(const size_t, const size_t, TGS*);
 
   virtual ~ThreadPool();
 
@@ -107,6 +110,8 @@ private:
   std::atomic<size_t> _processed = 0;
 
   size_t _num_threads;
+  
+  size_t _thread_task;
 
   TGS* _tgs; 
 
@@ -137,7 +142,7 @@ friend class ThreadPool;
 
 public:
 
-  TGS(const size_t);
+  TGS(const size_t, const size_t);
 
   void dump(std::ostream&) const;
   
@@ -169,8 +174,8 @@ private:
 
 
 // TGS construtor
-inline TGS::TGS(const size_t num_threads) : 
-  _promise(num_threads+1), _tpool(num_threads, this) {
+inline TGS::TGS(const size_t num_threads, const size_t thread_task) : 
+  _promise(num_threads+1), _tpool(num_threads, thread_task, this) {
   
   std::cout << num_threads << " concurrent threads are supported.\n";
 
@@ -195,23 +200,22 @@ inline TGS::TGS(const size_t num_threads) :
 
     _graph[from].push_back(to);
     _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
+    _tasks[from]->num_child.fetch_add(1, std::memory_order_relaxed);
     _tasks[to]->parents.push_back(_tasks[from].get());
   }
 }
 
 
 inline TGS::~TGS() {
-  for (auto& t : _tasks) {
-    sycl::free(t->ptr_matrix, t->sycl_queue);
-    //if (t->accelerator == Accelerator::GPU) {
-    //  sycl::queue q{sycl::gpu_selector_v};
-    //  sycl::free(t->ptr_matrix, q);
-    //}
-    //else {
-    //  sycl::queue q{sycl::cpu_selector_v};
-    //  sycl::free(t->ptr_matrix, q);
-    //}
-  }
+  //for (auto& t : _tasks) {
+  //  if (t->ptr_matrix && t->accelerator == Accelerator::GPU) {
+  //    sycl::free(t->ptr_matrix, t->sycl_queue);
+  //  }
+  //  
+  //  else if (t->ptr_matrix && t->accelerator == Accelerator::CPU) {
+  //    delete t->ptr_matrix;
+  //  }
+  //}
 }
 
 
@@ -318,13 +322,14 @@ inline ThreadPool::~ThreadPool() {
 
 
 // constructor
-inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
+inline ThreadPool::ThreadPool(const size_t num_threads, const size_t thread_task, TGS* t) :
   _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1),
   _rl{num_threads} { 
-   
+  
   _num_threads = num_threads;
   _tgs = t;
- 
+  _thread_task = thread_task; 
+
   for (size_t i = 0; i < _num_threads; ++i) {
     _tgs->_future.emplace_back(_tgs->_promise[i].get_future());
 
@@ -360,6 +365,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   }
 
   // master thread does the scheduling
+  _tgs->_future.emplace_back(_tgs->_promise[_num_threads].get_future());
   _workers.emplace_back([&, &p=_tgs->_promise](){
     Task* task(nullptr);
      
@@ -371,7 +377,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         }); 
 
         if(_stop) {
-          p[p.size()-1].set_value();
+          p[_num_threads].set_value();
           return;
         }
         
@@ -420,96 +426,143 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
   std::ostringstream oss;
 
-  // TODO: add SYCL kernel based on the policy
-
-  // offload to gpu or cpu
-  //sycl::queue q;
-
-  try {
-    if (task->accelerator == Accelerator::CPU) {
-      //q = _sycl_cpu_queues[id];
-      task->sycl_queue = _sycl_cpu_queues[id];
-    }
-    else {
-      //q = _sycl_gpu_queues[id];
-      task->sycl_queue = _sycl_gpu_queues[id];
-    }
-  } catch (sycl::exception const& e) {
-    if (task->accelerator == Accelerator::CPU) {
-      oss << "Cannot select a CPU : "
-          << e.what() << '\n'
-          << "Using a GPU device\n";
-      //q = _sycl_gpu_queues[id];
-      task->sycl_queue = _sycl_gpu_queues[id];
-    }
-    else {
-      oss << "Cannot select a GPU : "
-          << e.what() << '\n'
-          << "Using a CPU device\n";
-      //q = _sycl_cpu_queues[id];
-      task->sycl_queue = _sycl_cpu_queues[id];
-    }
-    printf("%s", oss.str().c_str());
-    oss.str("");
-  }
-  //task->sycl_queue = q; 
-  oss << "Worker "        << id 
-      << " submits task " << task->ID 
-      << " to " 
-      //<< q.get_device().get_info<sycl::info::device::name>()
-      << (task->sycl_queue).get_device().template get_info<sycl::info::device::name>()
-      << std::endl;
-  printf("%s", oss.str().c_str());
-  oss.str("");
-  
-  int parent_sum = 0;
   // sum up all parents' sum
-  //for (auto& p : task->parents) {
-  //  //printf("Task %ld has parents : %ld\n", task->ID, p->ID);
-  //  for (auto& m : p->Matrix) {
-  //    parent_sum += m;
-  //  }
-  //}
+  int parent_sum = 0;
+  int* ptr = nullptr;
   
   for (auto& p : task->parents) {
     for (int i = 0; i < p->M * p->M; ++i) {
-      parent_sum += p->ptr_matrix[i];
+      parent_sum += (p->ptr_matrix)[i];
+    }
+    
+    // free parent's memory allocated on CPU or GPU
+    // if i am the last child to fetch parent's matrix 
+    if(p->num_child.fetch_sub(1) == 1) {
+      if (p->accelerator == Accelerator::CPU) {
+        delete p->ptr_matrix;
+      }
+      else {
+	      sycl::free(p->ptr_matrix, p->sycl_queue);
+      }
     }
   }
-  //printf("\n"); 
-  //oss << "parent_sum = " << parent_sum << std::endl;
-  //printf("%s", oss.str().c_str());
-  //oss.str("");
+  
+  /* 
+  oss << "Worker "        << id 
+      << " submits task " << task->ID 
+      << " to ";
+  if (task->accelerator == Accelerator::CPU) {
+    task->sycl_queue = _sycl_cpu_queues[id];
+  }
+  else {
+    task->sycl_queue = _sycl_gpu_queues[id];
+  }
+  oss << (task->sycl_queue).get_device().template get_info<sycl::info::device::name>()
+      << std::endl;
+  printf("%s", oss.str().c_str());
+  oss.str("");
+  */
 
+  
   size_t M = task->M;
   size_t N = task->N;
 
+  // CPU or GPU matrix multiplication
+  if (task->accelerator == Accelerator::CPU) {
+    //task->sycl_queue = _sycl_cpu_queues[id];
+    
+    // CPU version matrix multiplication
+    std::vector<int> da(M*N, parent_sum - id);
+    std::vector<int> db(N*M, parent_sum + id);
+    task->ptr_matrix = new int[M*M]; 
+
+    #pragma omp parallel num_threads(_thread_task)
+    {
+      #pragma omp for
+      for (int i = 0; i < M; i++) {    
+        for (int j = 0; j < M; j++) {   
+            (task->ptr_matrix)[i*M+j] = 0;    
+            for (int k = 0; k < N; k++) {    
+                (task->ptr_matrix)[i*M+j] += (da[i*M+k] * db[k*N+j]);    
+            }    
+        }    
+      }    
+    }
+
+    // i am a node with no child
+    // delete the pointer directlyd
+    if (task->num_child == 0) {
+      delete task->ptr_matrix;
+    }
+  }
+
+  else {
+    task->sycl_queue = _sycl_gpu_queues[id];
+  
+    // GPU version matrix multiplication
+    int* da = sycl::malloc_shared<int>(M*N, task->sycl_queue);
+    int* db = sycl::malloc_shared<int>(N*M, task->sycl_queue);
+    task->ptr_matrix = sycl::malloc_shared<int>(M*M, task->sycl_queue);
+    int* dc = task->ptr_matrix;
+          
+    // initialize matrix a and matrix b
+    (task->sycl_queue).parallel_for(
+      sycl::range<1>(M*N),
+      [=](sycl::id<1> i) {
+        da[i] = parent_sum - id;
+        db[i] = parent_sum + id;
+      }
+    ).wait();
+
+    auto _M = (M % 16 == 0) ? M : (M + 16 - M % 16);
+
+    // matrix multiplication c = a * b
+    task->sycl_queue.parallel_for(
+      sycl::nd_range<2>{sycl::range<2>(_M, _M), sycl::range<2>(16, 16)},
+      [=](sycl::nd_item<2> item) {
+      
+        int row = item.get_global_id(0);
+        int col = item.get_global_id(1);
+        
+        if(row < M && col < M) {
+          int sum = 0;
+          
+          for(int n = 0; n < N; n++) {
+              sum += da[row * N + n] * db[n * M + col];
+          }
+          //task->ptr_matrix[row * M + col] = sum;
+          dc[row * M + col] = sum;
+        }
+      }
+    ).wait();
+
+    sycl::free(da, task->sycl_queue);
+    sycl::free(db, task->sycl_queue);
+ 
+    // i am the node with no child
+    // directly free the pointer 
+    if (task->num_child == 0) {
+      sycl::free(task->ptr_matrix, task->sycl_queue);
+    }
+  }
+ 
+  
+  /*  
   // declare three USM pointers to three matrixes
   // da points to matrix a, db to matrix b, dc to matrix c
-
-  //int* da = sycl::malloc_shared<int>(M*N, q);
-  //int* db = sycl::malloc_shared<int>(N*M, q);
+  // GPU version
   int* da = sycl::malloc_shared<int>(M*N, task->sycl_queue);
   int* db = sycl::malloc_shared<int>(N*M, task->sycl_queue);
-  //int* dc = sycl::malloc_shared<int>(M*M, q);
-  //task->ptr_matrix = sycl::malloc_shared<int>(M*M, q);
   task->ptr_matrix = sycl::malloc_shared<int>(M*M, task->sycl_queue);
   int* dc = task->ptr_matrix;
-
-  // initialize matrix a
+	
+  // initialize matrix a and matrix b
+  // TODO: combine the two kernels
   //q.parallel_for(
   (task->sycl_queue).parallel_for(
     sycl::range<1>(M*N),
     [=](sycl::id<1> i) {
       da[i] = parent_sum - id;
-    }
-  );
-
-  // initialize matrix b
-  //q.parallel_for(
-  (task->sycl_queue).parallel_for(
-    sycl::range<1>(N*M),
-    [=](sycl::id<1> i) {
       db[i] = parent_sum + id;
     }
   ).wait();
@@ -537,28 +590,20 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     }
   ).wait();
 
-
-  // save result back to task's local Matrix
-  //for (size_t i = 0; i < M*M; i++) {
-  //  task->Matrix[i] = *(dc+i);
-  //}
-  
   sycl::free(da, task->sycl_queue);
   sycl::free(db, task->sycl_queue);
-  //sycl::free(da, q);
-  //sycl::free(db, q);
-  //sycl::free(dc, q);
+  */
 
 
 
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
-
     if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
       enqueue(_tgs->_tasks[tid].get());
     }  
   }
 
+  // finish all tasks
   if (_processed.fetch_add(1) + 1 == _tgs->_V) {
     _stop = true;
     for(auto& cv : _cvs) {

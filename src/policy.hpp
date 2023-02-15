@@ -49,7 +49,7 @@ RL_Policy::policy(T&& task) {
       accelerator = Accelerator::CPU;
     break;
   }
-
+  //accelerator = Accelerator::CPU;
   return std::make_pair(thread_id, accelerator); 
 }
 
