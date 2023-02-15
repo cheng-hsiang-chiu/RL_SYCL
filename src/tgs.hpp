@@ -483,7 +483,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
         for (int j = 0; j < M; j++) {   
             (task->ptr_matrix)[i*M+j] = 0;    
             for (int k = 0; k < N; k++) {    
-                (task->ptr_matrix)[i*M+j] += (da[i*M+k] * db[k*N+j]);    
+                (task->ptr_matrix)[i*M+j] += (da[i*N+k] * db[k*M+j]);    
             }    
         }    
       }    
