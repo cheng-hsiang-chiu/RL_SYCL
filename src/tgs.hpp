@@ -439,7 +439,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     // if i am the last child to fetch parent's matrix 
     if(p->num_child.fetch_sub(1) == 1) {
       if (p->accelerator == Accelerator::CPU) {
-        delete p->ptr_matrix;
+        delete [] p->ptr_matrix;
       }
       else {
 	      sycl::free(p->ptr_matrix, p->sycl_queue);
