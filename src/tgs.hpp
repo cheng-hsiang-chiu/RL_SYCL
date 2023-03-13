@@ -87,6 +87,8 @@ struct Task {
 
 class ThreadPool {
 
+friend class RL_Policy;
+
 public:
 
   bool stop = false;
@@ -136,10 +138,13 @@ private:
                Actions_Data>> _state_action_tuples;
 };
 
+
 // task graph scheduler class  
 class TGS {
 
 friend class ThreadPool;
+
+friend class RL_Policy;
 
 public:
 
@@ -233,7 +238,8 @@ inline ThreadPool::~ThreadPool() {
 
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
-  _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1), _rl{num_threads} { 
+  _queues(num_threads+1), _mtxs(num_threads+1),
+  _cvs(num_threads+1), _rl{num_threads} { 
    
   _num_threads = num_threads;
   _tgs = t;
@@ -300,13 +306,15 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       _tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now();
 
       // master begins to call RL for an action regarding the task
-      auto policy = _rl.policy(task);
+      auto policy = _rl.policy_read(task);
       //printf("Master decides to run task %zu with the policy:worker %ld, accelerator %d\n", 
       //        task->ID, policy.first, policy.second);
      
       task->worker_id = policy.first; 
       // record the state and action pair
       _state_query(*task, policy);
+      _rl.state_write(this, _tgs);
+      
       
       // master gets the action recommendation and pushes the task to
       // the corresponding worker's queue
@@ -315,7 +323,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
         task->accelerator = policy.second;
         _queues[policy.first].emplace_back(task);
       }
-
+      
       _cvs[policy.first].notify_one();
     }
   });
