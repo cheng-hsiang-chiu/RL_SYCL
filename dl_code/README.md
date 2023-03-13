@@ -3,21 +3,31 @@
 
 # Structure
 - pdf : An introduction to RL learning
-- test.py : an easy python script
-- embedded_python_in_cpp.cpp : a cpp file that invoking python code
+- policy.py : a python script that generates actions and receives states
 
-# Embedded a python code in C++
-There are three ways to invoke python codes. In `embedded_python_in_cpp.cpp`, the three ways
-are demonstrated as case 1, 2, and 3.
-Case 1 simply executes a python line.
-Case 2 executes test.py.
-Case 3 is a generalized way.
-To build `embedded_python_in_cpp.cpp`, simply run the instruction where python3.x is the python binary in your system:
-```
-g++ -std=c++17 embedded_python_in_cpp.cpp -I/path/to/python/headers -lpython3.x
-```
+# How policy.py interacts with the Cpp code (main.cpp)
+The channel that policy.py and main.cpp communicate through is a text file named "action_state.txt"
+In the beginning, main.cpp waits for an action suggested by policy.py and looks for the following
+protocol in action_state.txt
 
-To run the executable, simply run the instruction:
 ```
-./a.out
+2
+1
+ACTION_READY
 ```
+The first line is the thread id, the second line is the accelerator, and
+the third line denotes that the action is successfully writen in action_state.txt by policy.py.
+
+Then, main.cpp reads the action in action_state.txt and writes a corresponding state in action_state.txt
+with the following protocol,
+```
+0 0 0 0 0 0 0 ...
+STATE_READY
+```
+The first line is the state statistics and the second line denotes that the state statistics
+is successfully writen in action_state.txt by main.cpp.
+
+When main.cpp finishes all the tasks, it will write the following in action_state.txt
+```
+DONE
+``` 
