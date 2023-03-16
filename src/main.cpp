@@ -8,7 +8,8 @@ int main() {
   
   // 4 is the number of worker threads
   // 16 is the number of thread for a CPU task
-  tgs::TGS scheduler(4, 16);
+  // 8 is the multiplier of tensor 
+  tgs::TGS scheduler(4, 16, 8);
 
   //scheduler.dump(std::cout);
 

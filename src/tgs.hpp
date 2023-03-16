@@ -142,7 +142,7 @@ friend class ThreadPool;
 
 public:
 
-  TGS(const size_t, const size_t);
+  TGS(const size_t, const size_t, const size_t);
 
   void dump(std::ostream&) const;
   
@@ -168,14 +168,21 @@ private:
   
   std::vector<std::vector<size_t>> _graph;
  
-  ThreadPool _tpool; 
+  ThreadPool _tpool;
+
+  size_t _multiplier;
 };
 
 
 
 // TGS construtor
-inline TGS::TGS(const size_t num_threads, const size_t thread_task) : 
-  _promise(num_threads+1), _tpool(num_threads, thread_task, this) {
+inline TGS::TGS(
+  const size_t num_threads,
+  const size_t thread_task,
+  const size_t tensor_multiplier) : 
+  _promise(num_threads+1),
+  _tpool(num_threads, thread_task, this),
+  _multiplier(tensor_multiplier) {
   
   std::cout << num_threads << " concurrent threads are supported.\n";
 
@@ -431,8 +438,10 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   int* ptr = nullptr;
   
   for (auto& p : task->parents) {
-    for (int i = 0; i < p->M * p->M; ++i) {
-      parent_sum += (p->ptr_matrix)[i];
+    for (size_t m = 0; m < _tgs->_multiplier; ++m) {
+      for (int i = 0; i < p->M * p->M; ++i) {
+        parent_sum += (p->ptr_matrix)[i];
+      }
     }
     
     // free parent's memory allocated on CPU or GPU
