@@ -96,7 +96,7 @@ public:
   
   ThreadPool &operator=(ThreadPool &&) = delete;
   
-  ThreadPool(const size_t, const size_t, TGS*);
+  ThreadPool(const size_t, const size_t, TGS*, const size_t);
 
   virtual ~ThreadPool();
 
@@ -142,7 +142,7 @@ friend class ThreadPool;
 
 public:
 
-  TGS(const size_t, const size_t, const size_t);
+  TGS(const size_t, const size_t, const size_t, const size_t);
 
   void dump(std::ostream&) const;
   
@@ -179,10 +179,11 @@ private:
 inline TGS::TGS(
   const size_t num_threads,
   const size_t thread_task,
-  const size_t tensor_multiplier) : 
+  const size_t tensor_multiplier,
+  size_t device_id=0) : 
   _promise(num_threads+1),
-  _tpool(num_threads, thread_task, this),
-  _multiplier(tensor_multiplier) {
+  _tpool(num_threads, thread_task, this, device_id+1),
+  _multiplier(tensor_multiplier){
   
   std::cout << num_threads << " concurrent threads are supported.\n";
 
@@ -329,7 +330,11 @@ inline ThreadPool::~ThreadPool() {
 
 
 // constructor
-inline ThreadPool::ThreadPool(const size_t num_threads, const size_t thread_task, TGS* t) :
+inline ThreadPool::ThreadPool(
+  const size_t num_threads,
+  const size_t thread_task,
+  TGS* t,
+  const size_t gpu_id) :
   _queues(num_threads+1), _mtxs(num_threads+1), _cvs(num_threads+1),
   _rl{num_threads} { 
   
@@ -337,12 +342,15 @@ inline ThreadPool::ThreadPool(const size_t num_threads, const size_t thread_task
   _tgs = t;
   _thread_task = thread_task; 
 
+  // select GPU device based on user's choice
+  auto platforms = sycl::platform::get_platforms();
   for (size_t i = 0; i < _num_threads; ++i) {
     _tgs->_future.emplace_back(_tgs->_promise[i].get_future());
-
+    std::cout << "gpu id = " << gpu_id << '\n';
     // every worker has its own sycl queue  
-    _sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector_v});
     _sycl_cpu_queues.emplace_back(sycl::queue{sycl::cpu_selector_v});
+    //_sycl_gpu_queues.emplace_back(sycl::queue{sycl::gpu_selector_v});
+    _sycl_gpu_queues.emplace_back(sycl::queue{platforms[gpu_id].get_devices()[0]});
 
     _workers.emplace_back([&, id=i, &p=_tgs->_promise]() {
       Task* task(nullptr);
