@@ -352,8 +352,23 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
   // TODO: add SYCL kernel based on the policy
   // right now we use sleep to simulate the loading of a task
-  std::this_thread::sleep_for(std::chrono::microseconds(task->M * task->N * task->N));
+  //std::this_thread::sleep_for(std::chrono::microseconds(task->M * task->M * task->N));
 
+  // the following does matrix multiplication
+  std::vector<int> A(task->M * task->N, 1);
+  std::vector<int> B(task->N * task->M, -1);
+  std::vector<int> C(task->M * task->M, 0);
+
+  for (size_t i = 0; i < task->M; ++i) {
+    for (size_t j = 0; j < task->M; ++j) {
+      C[i*task->M+j] = 0;
+      for (size_t k = 0; k < task->N; ++k) {
+        C[i*task->M+j] += A[i*task->N+k] * B[k*task->M+j];  
+      }
+    }
+  }
+
+  
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
     if(_tgs->_tasks[tid]->join_counter.fetch_sub(1)==1){
