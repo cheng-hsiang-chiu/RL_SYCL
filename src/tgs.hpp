@@ -446,7 +446,7 @@ inline void ThreadPool::_state_query(
 
       size_t sum = 0;
       for (auto& t : _queues[i]) {
-        sum+=(t->M*t->N*t->N);
+        sum+=(t->M*t->M*t->N);
       }
       tmp_states[i].sum_task_loads = sum;
       getloadavg(tmp_states[i].loadavg, 3);
@@ -494,7 +494,7 @@ inline void ThreadPool::dump_state_action_tuples() const {
       size_t sum_loading_pid = 0;
       for (auto& pid : _tgs->_tasks[std::get<2>(_state_action_tuples[i]).tid]->parent_id) {
         if (_tgs->_tasks[pid]->worker_id == j) {
-          sum_loading_pid += (_tgs->_tasks[pid]->M*_tgs->_tasks[pid]->N*_tgs->_tasks[pid]->N);   
+          sum_loading_pid += (_tgs->_tasks[pid]->M*_tgs->_tasks[pid]->M*_tgs->_tasks[pid]->N);   
         }
       } 
       MyFile << sum_loading_pid << ' ';   
