@@ -122,7 +122,7 @@ RL_Policy::state_write(T* tp, C* tgs) {
       size_t sum_loading_pid = 0;
       for (auto& pid : (tgs->_tasks)[std::get<2>(tp->_state_action_tuples[i]).tid]->parent_id) {
         if (tgs->_tasks[pid]->worker_id == j) {
-          sum_loading_pid += (tgs->_tasks[pid]->M*tgs->_tasks[pid]->N*tgs->_tasks[pid]->N);   
+          sum_loading_pid += (tgs->_tasks[pid]->M*tgs->_tasks[pid]->M*tgs->_tasks[pid]->N);   
         }
       } 
       handler << sum_loading_pid << ' ';   
