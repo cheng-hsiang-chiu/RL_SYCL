@@ -9,20 +9,21 @@ MESSAGE(STATUS "PROJECT_SOURCE_DIR: " ${PROJECT_SOURCE_DIR})
 MESSAGE(STATUS "CMAKE_CURRENT_SOURCE_DIR: " ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(CMAKE_CXX_COMPILER "clang++")
-set(CMAKE_CXX_FLAGS "-std=c++17 -O2 -pthread -fsycl -fsycl-unnamed-lambda -fsycl-targets=spir64_x86_64,nvptx64-nvidia-cuda -v -fopenmp")
+set(CMAKE_CXX_FLAGS "-std=c++17 -O2 -pthread -fsycl -fsycl-unnamed-lambda -fsycl-targets=spir64_x86_64,nvptx64-nvidia-cuda -v -fopenmp -lomp")
 set(FM_3RD_PARTY_DIR ${PROJECT_SOURCE_DIR}/3rd-party)
 
 add_library(error_settings INTERFACE)
 
 add_executable(main ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp)
 
-target_link_libraries(main /usr/lib/gcc/x86_64-redhat-linux/4.8.5//libgomp.so)
+#target_link_libraries(main /usr/lib/gcc/x86_64-redhat-linux/4.8.5//libgomp.so)
 target_link_libraries(main /usr/local/cuda-11.2/lib64/libcudart.so)
 target_link_libraries(main ${CMAKE_CURRENT_SOURCE_DIR}/lib/libgpuinfo.a)
 
 target_include_directories(main PUBLIC 
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   "/usr/local/cuda-11.2/include"
+  "/mnt/raid10/qiwei/taskflow-research/sycl_workspace/llvm/build/projects/openmp/runtime/src"
 #  "/opt/rh/llvm-toolset-7/root/usr/lib64/clang/5.0.1/include"
 )
 

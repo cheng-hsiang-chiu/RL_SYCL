@@ -13,7 +13,7 @@
 #include <string>
 #include <sstream>
 #include <future>
-//#include <omp.h>
+#include <omp.h>
 
 #include <CL/sycl.hpp>
 
@@ -502,7 +502,8 @@ inline void ThreadPool::_process(size_t id, T&& task) {
             for (int k = 0; k < N; k++) {    
                 (task->ptr_matrix)[i*M+j] += (da[i*N+k] * db[k*M+j]);    
             }    
-        }    
+        }
+        //printf("thread id:%d\n", omp_get_thread_num());    
       }    
     }
 
