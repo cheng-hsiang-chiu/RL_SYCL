@@ -128,8 +128,12 @@ RL_Policy::state_write(T* tp, C* tgs) {
       handler << sum_loading_pid << ' ';   
     }
 
+    size_t taskid = std::get<2>(tp->_state_action_tuples[i]).tid;
+    
     handler << std::get<2>(tp->_state_action_tuples[i]).tid << " "
-            << std::get<2>(tp->_state_action_tuples[i]).wid << "\n";
+            << std::get<2>(tp->_state_action_tuples[i]).wid << " "
+            << tgs->_tasks[taskid]->M << " "
+            << tgs->_tasks[taskid]->N << "\n";
   }
   
   handler << "STATE_READY\n";
