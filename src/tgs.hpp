@@ -87,7 +87,7 @@ struct Task {
 
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n} {
-    result_matrix.resize(m*m);    
+    result_matrix.resize(m*m, 0);    
   } 
 };
 
@@ -384,6 +384,10 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     auto& rm = _tgs->_tasks[pid]->result_matrix;
     parent_sum += std::accumulate(rm.begin(), rm.end(), 0);
   }
+  
+  //std::ostringstream oss;
+  //oss << "Worker " << id << " is processing task " << task->ID << " with parent data = " << parent_sum << std::endl;
+  //printf("%s\n", oss.str().c_str());
 
   // use parent_sum to initialize matrix A and B
   std::vector<int> A(task->M * task->N, parent_sum+task->ID);
