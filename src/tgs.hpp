@@ -134,6 +134,12 @@ private:
 
   std::vector<std::deque<Task*>> _queues;
 
+  bool _is_first_task = true;
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> _beg_time;
+  
+  std::chrono::time_point<std::chrono::high_resolution_clock> _end_time;
+
   template<typename T>
   void _process(size_t, T&&);
 
@@ -159,6 +165,8 @@ public:
   void dump(std::ostream&) const;
 
   void schedule();
+
+  ~TGS() { std::cout << "TGS destructor\n"; }
 
 private:
   size_t _V;
@@ -239,6 +247,7 @@ inline ThreadPool::~ThreadPool() {
   for (auto& w : _workers) {
     w.join();
   }
+  std::cout << "ThreadPool destructor\n";
 }
 
 
@@ -246,7 +255,7 @@ inline ThreadPool::~ThreadPool() {
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   _queues(num_threads+1), _mtxs(num_threads+1),
   _cvs(num_threads+1), _rl{num_threads} { 
-   
+  std::cout << "ThreadPool constructor\n"; 
   _num_threads = num_threads;
   _tgs = t;
   
@@ -309,7 +318,7 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       // record the timstamp before master calls RL for an action recommendation
       // timestamp is used for plotting histogram only
       // could comment the line if not necessary
-      _tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now();
+      //_tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now();
 
       // master begins to call RL for an action regarding the task
       auto policy = _rl.policy_read(task);
@@ -317,10 +326,19 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       //        task->ID, policy.first, policy.second);
      
       task->worker_id = policy.first; 
+
+      _end_time = std::chrono::high_resolution_clock::now();
+      if (_is_first_task) {
+        _beg_time = _end_time;
+        _is_first_task = false;
+      }
       // record the state and action pair
       _state_query(*task, policy);
-      _rl.state_write(this, _tgs);
-      
+      _rl.state_write(this, _tgs,
+        std::chrono::duration_cast<std::chrono::microseconds>(
+        _end_time - _beg_time).count()
+      );
+      _beg_time = _end_time;
       
       // master gets the action recommendation and pushes the task to
       // the corresponding worker's queue
@@ -400,10 +418,10 @@ inline void ThreadPool::_process(size_t id, T&& task) {
 
     // dump the timestamp 
     // used for plotting histogram only
-    _tgs->_dump_timestamp();
+    //_tgs->_dump_timestamp();
 
     // dump state_action_tuples
-    dump_state_action_tuples();
+    //dump_state_action_tuples();
   }
 }
 

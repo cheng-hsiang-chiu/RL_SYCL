@@ -21,13 +21,13 @@ class RL_Policy {
 public:
   //RL_Policy() = default;
 
-  RL_Policy(const size_t n): _num_threads{n}, read_vector(3) {}
+  RL_Policy(const size_t n): _num_threads{n}, read_vector(3) { std::cout << "RL Policy constructor\n"; }
 
   template<typename T>
   std::pair<size_t, Accelerator> policy_read(T&&);
 
   template<typename T, typename C>
-  void state_write(T*, C*);
+  void state_write(T*, C*, double);
 
   ~RL_Policy();
 
@@ -84,9 +84,9 @@ RL_Policy::policy_read(T&& task) {
     break;
   }
   
-  std::cout << "read_vector[0] = " << read_vector[0] << '\n';
-  std::cout << "read_vector[1] = " << read_vector[1] << '\n';
-  std::cout << "read_vector[2] = " << read_vector[2] << '\n';
+  //std::cout << "read_vector[0] = " << read_vector[0] << '\n';
+  //std::cout << "read_vector[1] = " << read_vector[1] << '\n';
+  //std::cout << "read_vector[2] = " << read_vector[2] << '\n';
   
   size_t thread_id = std::stoi(read_vector[0]);
   Accelerator accelerator;
@@ -104,17 +104,9 @@ RL_Policy::policy_read(T&& task) {
 
 template<typename T, typename C>
 inline void
-RL_Policy::state_write(T* tp, C* tgs) {
+RL_Policy::state_write(T* tp, C* tgs, double elapsed) {
 
   std::ofstream handler(_file_path);
-  //handler << "0\n";
-  //handler << "1\n";
-  //handler << "2\n";
-  //handler << "3\n";
-  //handler << "4\n";
-  //handler << "5\n";
-  //handler << "6\n";
-  //handler << "STATE_READY\n";
 
   for (size_t i = 0; i < tp->_state_action_tuples.size(); ++i) {
     for (size_t j = 0; j < std::get<0>(tp->_state_action_tuples[i]).size(); ++j) {
@@ -133,7 +125,8 @@ RL_Policy::state_write(T* tp, C* tgs) {
     handler << std::get<2>(tp->_state_action_tuples[i]).tid << " "
             << std::get<2>(tp->_state_action_tuples[i]).wid << " "
             << tgs->_tasks[taskid]->M << " "
-            << tgs->_tasks[taskid]->N << "\n";
+            << tgs->_tasks[taskid]->N << " "
+            << elapsed                << "\n";
   }
   
   handler << "STATE_READY\n";
@@ -143,6 +136,7 @@ RL_Policy::state_write(T* tp, C* tgs) {
 
 
 inline RL_Policy::~RL_Policy() {
+  std::cout << "RL Policy destructor\n";
   std::ofstream handler(_file_path);
   handler << "DONE";
   handler.close();
