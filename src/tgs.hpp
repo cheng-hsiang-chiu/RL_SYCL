@@ -510,7 +510,7 @@ inline void ThreadPool::_process(size_t id, T&& task) {
     // i am a node with no child
     // delete the pointer directlyd
     if (task->num_child == 0) {
-      delete task->ptr_matrix;
+      delete [] task->ptr_matrix;
     }
   }
 
