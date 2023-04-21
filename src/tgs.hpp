@@ -82,12 +82,14 @@ struct Task {
   // parent id of the task
   std::vector<size_t> parent_id;
 
-  // result of matrix multiplication
-  std::vector<int> result_matrix;
+  // atomic number of child
+  std::atomic<int> num_child = 0;
+
+  // pointer to a dynamically allocated matrix 
+  int* ptr_matrix = nullptr;
 
   Task(const size_t id, const size_t m, const size_t n) :
     ID{id}, M{m}, N{n} {
-    result_matrix.resize(m*m, 0);    
   } 
 };
 
@@ -212,6 +214,8 @@ inline TGS::TGS(const size_t num_threads) : _tpool(num_threads, this) {
 
     _tasks[to]->join_counter.fetch_add(1, std::memory_order_relaxed);
     
+    _tasks[from]->num_child.fetch_add(1, std::memory_order_relaxed);
+
     _tasks[to]->parent_id.push_back(from);
   }
 }
@@ -379,10 +383,22 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   //std::this_thread::sleep_for(std::chrono::microseconds(task->M * task->M * task->N));
 
   // fetch the result from parents 
+  //int parent_sum = 0;
+  //for (auto pid : task->parent_id) {
+  //  auto& rm = _tgs->_tasks[pid]->result_matrix;
+  //  parent_sum += std::accumulate(rm.begin(), rm.end(), 0);
+  //}
+  // fetch the result from parents 
   int parent_sum = 0;
   for (auto pid : task->parent_id) {
-    auto& rm = _tgs->_tasks[pid]->result_matrix;
-    parent_sum += std::accumulate(rm.begin(), rm.end(), 0);
+    Task* parent = _tgs->_tasks[pid].get();
+    for (int i = 0; i < parent->M * parent->M; ++i) {
+      parent_sum += (parent->ptr_matrix)[i];
+    }
+
+    if (parent->num_child.fetch_sub(1) == 1) {
+      delete [] parent->ptr_matrix;
+    }
   }
   
   //std::ostringstream oss;
@@ -392,18 +408,24 @@ inline void ThreadPool::_process(size_t id, T&& task) {
   // use parent_sum to initialize matrix A and B
   std::vector<int> A(task->M * task->N, parent_sum+task->ID);
   std::vector<int> B(task->N * task->M, parent_sum-task->ID);
+  task->ptr_matrix = new int[task->M*task->M];
   //std::vector<int> C(task->M * task->M, 0);
 
   // the following does matrix multiplication
   for (size_t i = 0; i < task->M; ++i) {
     for (size_t j = 0; j < task->M; ++j) {
-      task->result_matrix[i*task->M+j] = 0;
+      task->ptr_matrix[i*task->M+j] = 0;
       for (size_t k = 0; k < task->N; ++k) {
-        task->result_matrix[i*task->M+j] += A[i*task->N+k] * B[k*task->M+j];  
+        task->ptr_matrix[i*task->M+j] += A[i*task->N+k] * B[k*task->M+j];  
       }
     }
   }
 
+  // i am a node with no child
+  // delete the pointer directly
+  if (task->num_child == 0) {
+    delete [] task->ptr_matrix;
+  }
   
   // decrement the dependencies
   for (auto& tid : _tgs->_graph[task->ID]) {
