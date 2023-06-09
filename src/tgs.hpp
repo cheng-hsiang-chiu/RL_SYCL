@@ -136,11 +136,11 @@ private:
 
   std::vector<std::deque<Task*>> _queues;
 
-  bool _is_first_task = true;
+  bool _is_first_task{true};
 
-  std::chrono::time_point<std::chrono::high_resolution_clock> _beg_time;
-  
-  std::chrono::time_point<std::chrono::high_resolution_clock> _end_time;
+  std::vector<std::chrono::time_point<std::chrono::high_resolution_clock>> _time_stamp;
+
+  std::chrono::microseconds _delta_time; 
 
   template<typename T>
   void _process(size_t, T&&);
@@ -258,7 +258,8 @@ inline ThreadPool::~ThreadPool() {
 // constructor
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   _queues(num_threads+1), _mtxs(num_threads+1),
-  _cvs(num_threads+1), _rl{num_threads} { 
+  _cvs(num_threads+1), _rl{num_threads},
+  _time_stamp{4, std::chrono::high_resolution_clock::now()} { 
   std::cout << "ThreadPool constructor\n"; 
   _num_threads = num_threads;
   _tgs = t;
@@ -318,31 +319,38 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
           _queues[_num_threads].pop_front();  
         }
       }
+     
+      if (_is_first_task) {
+        _is_first_task = false; 
+      }
+      else {
+        _time_stamp[3] = std::chrono::high_resolution_clock::now();
+      }
       
-      // record the timstamp before master calls RL for an action recommendation
-      // timestamp is used for plotting histogram only
-      // could comment the line if not necessary
-      //_tgs->_timestamp[idx++] = std::chrono::high_resolution_clock::now();
+      _delta_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        _time_stamp[3]-_time_stamp[2]+_time_stamp[1]-_time_stamp[0]);
+      
 
       // master begins to call RL for an action regarding the task
       auto policy = _rl.policy_read(task);
+      
       //printf("Master decides to run task %zu with the policy:worker %ld, accelerator %d\n", 
       //        task->ID, policy.first, policy.second);
-     
+      
+      _time_stamp[0] = std::chrono::high_resolution_clock::now(); 
+      
       task->worker_id = policy.first; 
-
-      _end_time = std::chrono::high_resolution_clock::now();
-      if (_is_first_task) {
-        _beg_time = _end_time;
-        _is_first_task = false;
-      }
+      
       // record the state and action pair
       _state_query(*task, policy);
+      
+      _time_stamp[1] = std::chrono::high_resolution_clock::now(); 
+      
       _rl.state_write(this, _tgs,
-        std::chrono::duration_cast<std::chrono::microseconds>(
-        _end_time - _beg_time).count()
+        std::chrono::duration_cast<std::chrono::microseconds>(_delta_time).count()
       );
-      _beg_time = _end_time;
+      
+      _time_stamp[2] = std::chrono::high_resolution_clock::now(); 
       
       // master gets the action recommendation and pushes the task to
       // the corresponding worker's queue
