@@ -347,7 +347,10 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       _time_stamp[1] = std::chrono::high_resolution_clock::now(); 
       
       _rl.state_write(this, _tgs,
-        std::chrono::duration_cast<std::chrono::microseconds>(_delta_time).count()
+        std::chrono::duration_cast<std::chrono::microseconds>(_delta_time).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[3]-_time_stamp[0]).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[0]-_time_stamp[1]).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[1]-_time_stamp[2]).count()
       );
       
       _time_stamp[2] = std::chrono::high_resolution_clock::now(); 

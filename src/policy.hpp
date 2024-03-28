@@ -27,7 +27,7 @@ public:
   std::pair<size_t, Accelerator> policy_read(T&&);
 
   template<typename T, typename C>
-  void state_write(T*, C*, double);
+  void state_write(T*, C*, double, double, double, double);
 
   ~RL_Policy();
 
@@ -104,7 +104,8 @@ RL_Policy::policy_read(T&& task) {
 
 template<typename T, typename C>
 inline void
-RL_Policy::state_write(T* tp, C* tgs, double elapsed) {
+RL_Policy::state_write(T* tp, C* tgs, double elapsed,
+  double policy_read_time, double state_query_time, double state_write_time) {
 
   std::ofstream handler(_file_path);
 
@@ -126,7 +127,10 @@ RL_Policy::state_write(T* tp, C* tgs, double elapsed) {
             << std::get<2>(tp->_state_action_tuples[i]).wid << " "
             << tgs->_tasks[taskid]->M << " "
             << tgs->_tasks[taskid]->N << " "
-            << elapsed                << "\n";
+            << elapsed                << " "
+            << policy_read_time       << " "
+            << state_query_time       << " "
+            << state_write_time       << "\n";
   }
   
   handler << "STATE_READY\n";
