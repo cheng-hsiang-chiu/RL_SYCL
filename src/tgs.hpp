@@ -259,7 +259,7 @@ inline ThreadPool::~ThreadPool() {
 inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
   _queues(num_threads+1), _mtxs(num_threads+1),
   _cvs(num_threads+1), _rl{num_threads},
-  _time_stamp{4, std::chrono::high_resolution_clock::now()} { 
+  _time_stamp{5, std::chrono::high_resolution_clock::now()} { 
   std::cout << "ThreadPool constructor\n"; 
   _num_threads = num_threads;
   _tgs = t;
@@ -343,14 +343,15 @@ inline ThreadPool::ThreadPool(const size_t num_threads, TGS* t) :
       
       // record the state and action pair
       _state_query(*task, policy);
-      
+     
+      _time_stamp[4] = _time_stamp[1]; 
       _time_stamp[1] = std::chrono::high_resolution_clock::now(); 
       
       _rl.state_write(this, _tgs,
         std::chrono::duration_cast<std::chrono::microseconds>(_delta_time).count(),
         std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[0]-_time_stamp[3]).count(),
         std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[1]-_time_stamp[0]).count(),
-        std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[1]-_time_stamp[2]).count()
+        std::chrono::duration_cast<std::chrono::microseconds>(_time_stamp[2]-_time_stamp[4]).count()
       );
       
       _time_stamp[2] = std::chrono::high_resolution_clock::now(); 
